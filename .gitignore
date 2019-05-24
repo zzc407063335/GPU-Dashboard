@@ -6,3 +6,5 @@ data/
 __pycache__/
 trainbox/__pycache__/
 agent/__pycache__/
+trainbox/.DS_Store
+agent/.DS_Store
