@@ -3,3 +3,6 @@
 *.txt
 data/
 .idea/
+__pycache__/
+trainbox/__pycache__/
+agent/__pycache__/

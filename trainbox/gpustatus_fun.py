@@ -19,15 +19,16 @@ brandNames = {
 # 返回错误类型
 def handleError(err):
     info = {'error_info':err.__str__()}
-    return json.dumps(info)
+    return info
 
 # 获取GPU的数量
 def GpuGetCounts():
     info = {'counts':nvmlDeviceGetCount()}
-    return json.dumps(info)
+    return info
 
 def ValidIndex(index):
-    if index >= nvmlDeviceGetCount() or index < 0:
+
+    if int(index) >= nvmlDeviceGetCount() or int(index) < 0:
         return False
     else:
         return True
@@ -36,22 +37,22 @@ def ValidIndex(index):
 def GpuGetDeviceName(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info':'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
-        device_name = nvmlDeviceGetName(handle)
+        device_name = nvmlDeviceGetName(handle).decode('utf-8')
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
     else:
         info = {'device_name':device_name}
-        return json.dumps(info)
+        return info
 
 # 获取设备系列
 def GpuGetDeviceBrand(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         brand_name = brandNames[nvmlDeviceGetBrand(handle)]
@@ -60,13 +61,13 @@ def GpuGetDeviceBrand(gpu_index):
         return error_info
     else:
         info = {'brand_name':brand_name}
-        return json.dumps(info)
+        return info
 
 # 获取persistence_mode
 def GpuGetDevicePersistenceModel(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         mode = 'Enabled' if (nvmlDeviceGetPersistenceMode(handle) != 0) else 'Disabled'
@@ -75,28 +76,28 @@ def GpuGetDevicePersistenceModel(gpu_index):
         return error_info
     else:
         info = {'mode':mode}
-        return json.dumps(info)
+        return info
 
 # 获取设备的UUID
 def GpuGetDeviceUUID(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
-        uuid = nvmlDeviceGetUUID(handle)
+        uuid = nvmlDeviceGetUUID(handle).decode('utf-8')
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
     else:
         info = {'uuid':uuid}
-        return json.dumps(info)
+        return info
 
 # 获取风扇转速
 def GpuGetDeviceFanSpeed(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         fan = str(nvmlDeviceGetFanSpeed(handle)) + " %"
@@ -105,13 +106,13 @@ def GpuGetDeviceFanSpeed(gpu_index):
         return error_info
     else:
         info = {'fan':fan}
-        return json.dumps(info)
+        return info
 
 # 获取工作状态,功耗状态
 def GpuGetDevicePerformanceState(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         perfState = nvmlDeviceGetPowerState(handle)
@@ -121,13 +122,13 @@ def GpuGetDevicePerformanceState(gpu_index):
         return error_info
     else:
         info = {'power_state':state}
-        return json.dumps(info)
+        return info
 
 # 获取Gpu内存使用情况,json
 def GpuGetDeviceMemory(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         mem_info = nvmlDeviceGetMemoryInfo(handle)
@@ -139,14 +140,14 @@ def GpuGetDeviceMemory(gpu_index):
         return error_info
     else:
         info = {'mem_total':mem_total,'mem_used':mem_used,'mem_free':mem_free}
-        info = json.dumps(info)
+        info = info
         return info
 
 # Bar1 内存使用 尚未明确这个数据在GPU架构中的角色
 def GpuGetDeviceBar1Memory(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         memInfo = nvmlDeviceGetBAR1MemoryInfo(handle)
@@ -158,14 +159,14 @@ def GpuGetDeviceBar1Memory(gpu_index):
         return error_info
     else:
         info = {'mem_total': mem_total, 'mem_used': mem_used, 'mem_free': mem_free}
-        info = json.dumps(info)
+        info = info
         return info
 
 # 获取温度
 def GpuGetDeviceTemperature(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         temp = str(nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)) + ' C'
@@ -176,13 +177,13 @@ def GpuGetDeviceTemperature(gpu_index):
         return error_info
     else:
         info = {"cur_temp":temp,"temp_shutdown":temp_shutdown,"temp_slowdown":temp_slowdown}
-        return json.dumps(info)
+        return info
 
 # 获取设备利用率
 def GpuGetDeviceUtilization(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         util = nvmlDeviceGetUtilizationRates(handle)
@@ -197,12 +198,13 @@ def GpuGetDeviceUtilization(gpu_index):
         return error_info
     else:
         info = {'gpu_util': gpu_util, 'mem_util': mem_util, 'encoder_util': encoder_util, 'decoder_util':decoder_util}
-        return json.dumps(info)
+        return info
 
+# 获取设备使用功率
 def GpuGetDevicePowerUsage(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         powDraw = (nvmlDeviceGetPowerUsage(handle) / 1000.0)  # 功率消耗
@@ -212,13 +214,13 @@ def GpuGetDevicePowerUsage(gpu_index):
         return error_info
     else:
         info = {'power_usage':powDrawStr}
-        return json.dumps(info)
+        return info
 
 # 返回gpu的功率信息
 def GpuGetDevicePowerInfo(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         powMan = nvmlDeviceGetPowerManagementMode(handle)
@@ -244,13 +246,13 @@ def GpuGetDevicePowerInfo(gpu_index):
         info['enforcedPowLimitStr'] = enforcedPowLimitStr # 与设定的限制有差别？待定
         info['powLimitStrMin'] = powLimitStrMin
         info['powLimitStrMax'] = powLimitStrMax
-        return json.dumps(info)
+        return info
 
 # 返回gpu的进程占用情况
 def GpuGetDeviceProcess(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
-        return json.dumps(error_info)
+        return error_info
     # 确保程序能够正确执行，异常不能这样写，待改进
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
@@ -285,7 +287,7 @@ def GpuGetDeviceProcess(gpu_index):
         error_info = handleError(err)
         return error_info
     else:
-        return json.dumps(info)
+        return info
 
 # this is not exectued when module is imported
 if __name__ == "__main__":
