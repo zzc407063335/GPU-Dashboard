@@ -19,7 +19,7 @@
       <div class="col-md-6 col-xl-4">
         <div>
           <div class="row">
-            <p-button round outline block @click.native="notifyVue('top','center')"> 暂停按钮</p-button>
+            <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
           </div>
         </div>
 
@@ -212,6 +212,7 @@ export default {
         }
     }
     return {
+      buttonText: "暂停监测",
       usagerateData: {
           columns: ['时间'],
           rows: [
@@ -302,9 +303,11 @@ export default {
   methods: {
       notifyVue(verticalAlign, horizontalAlign) {
         if(this.timer_id) {
+          this.buttonText="开始监测"
           clearInterval(this.timer_id)
           this.timer_id = false
         } else {
+          this.buttonText="暂停监测"
           this.timer_id = this.timer()
         }
         this.$notify({
@@ -406,6 +409,7 @@ export default {
         this.tempData.rows[len - 1]['时间'] = axisData
         this.powerData.rows[len - 1]['时间'] = axisData
         var api
+        try{
         for (var i = 0; i < self.statscardsData[0].value; i++) {
             api = "gpu_util" // 内存和设备计算的使用率
             await axios.post(queryURL+api,{ "gpu_index":i
@@ -446,7 +450,9 @@ export default {
               console.log(error)
             })
         }
-
+      }catch(err){
+        console.log(err)
+      }
         // console.log(this.tempData.rows)
 
         // console.log(axisData);

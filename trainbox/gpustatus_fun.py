@@ -100,7 +100,7 @@ def GpuGetDeviceFanSpeed(gpu_index):
         return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
-        fan = str(nvmlDeviceGetFanSpeed(handle)) + " %"
+        fan = str(nvmlDeviceGetFanSpeed(handle))
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -124,7 +124,7 @@ def GpuGetDevicePerformanceState(gpu_index):
         info = {'power_state':state}
         return info
 
-# 获取Gpu内存使用情况,json
+# 获取Gpu内存使用情况,GB
 def GpuGetDeviceMemory(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
@@ -132,9 +132,9 @@ def GpuGetDeviceMemory(gpu_index):
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         mem_info = nvmlDeviceGetMemoryInfo(handle)
-        mem_total = str(mem_info.total / 1024 / 1024) + ' MiB'
-        mem_used = str(mem_info.used / 1024 / 1024) + ' MiB'
-        mem_free = str(mem_info.total / 1024 / 1024 - mem_info.used / 1024 / 1024) + ' MiB'
+        mem_total = str(mem_info.total / 1024 / 1024 / 1024)
+        mem_used = str(mem_info.used / 1024 / 1024 / 1024)
+        mem_free = str(mem_info.total / 1024 / 1024 /1024 - mem_info.used / 1024 / 1024 /1024)
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -143,7 +143,7 @@ def GpuGetDeviceMemory(gpu_index):
         info = info
         return info
 
-# Bar1 内存使用 尚未明确这个数据在GPU架构中的角色
+# Bar1 内存使用 尚未明确这个数据在GPU架构中的角色,MB
 def GpuGetDeviceBar1Memory(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
@@ -151,9 +151,9 @@ def GpuGetDeviceBar1Memory(gpu_index):
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         memInfo = nvmlDeviceGetBAR1MemoryInfo(handle)
-        mem_total = str(memInfo.bar1Total / 1024 / 1024) + ' MiB'
-        mem_used = str(memInfo.bar1Used / 1024 / 1024) + ' MiB'
-        mem_free = str(memInfo.bar1Total / 1024 / 1024 - memInfo.bar1Used / 1024 / 1024) + ' MiB'
+        mem_total = str(memInfo.bar1Total / 1024 / 1024)
+        mem_used = str(memInfo.bar1Used / 1024 / 1024)
+        mem_free = str(memInfo.bar1Total / 1024 / 1024 - memInfo.bar1Used / 1024 / 1024)
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -169,9 +169,9 @@ def GpuGetDeviceTemperature(gpu_index):
         return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
-        temp = str(nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)) + ' C'
-        temp_shutdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SHUTDOWN)) + ' C'
-        temp_slowdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SLOWDOWN)) + ' C'
+        temp = str(nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU))
+        temp_shutdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SHUTDOWN))
+        temp_slowdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SLOWDOWN))
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -188,11 +188,11 @@ def GpuGetDeviceUtilization(gpu_index):
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         util = nvmlDeviceGetUtilizationRates(handle)
         (util_int, ssize) = nvmlDeviceGetEncoderUtilization(handle)
-        encoder_util = str(util_int) + ' %'
+        encoder_util = str(util_int)
         (util_int, ssize) = nvmlDeviceGetDecoderUtilization(handle)
-        decoder_util = str(util_int) + ' %'
-        gpu_util = str(util.gpu) + " %"
-        mem_util = str(util.memory) + " %"
+        decoder_util = str(util_int)
+        gpu_util = str(util.gpu)
+        mem_util = str(util.memory)
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -208,7 +208,7 @@ def GpuGetDevicePowerUsage(gpu_index):
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         powDraw = (nvmlDeviceGetPowerUsage(handle) / 1000.0)  # 功率消耗
-        powDrawStr = '%.2f W' % powDraw
+        powDrawStr = '%.2f' % powDraw
     except NVMLError as err:
         error_info = handleError(err)
         return error_info

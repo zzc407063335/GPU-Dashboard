@@ -4,6 +4,7 @@ import rest_fun
 from pynvml import nvmlInit
 import gpustatus_fun
 from flask import Flask
+from flask_cors import CORS
 from flask_restful import reqparse, abort, Api, Resource
 from enum import Enum,unique
 import json, threading
@@ -34,7 +35,7 @@ class GpuInfoType(Enum):
 
 app = Flask(__name__)
 api = Api(app)
-
+CORS(app)
 # parser = reqparse.RequestParser()
 
 
