@@ -142,4 +142,6 @@ api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
 
 if __name__ == '__main__':
     nvmlInit()
-    app.run(host="0.0.0.0",port=5001)
+    # app.run(host="0.0.0.0",port=5001) # 注意 本机测试和容器内测试端口要变动
+
+    app.run(host="0.0.0.0",port=5001) # 注意 本机测试和容器内测试端口要变动

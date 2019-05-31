@@ -16,13 +16,11 @@
           </div>
         </stats-card>
       </div>
-      <div class="col-md-6 col-xl-4">
-        <div>
-          <div class="row">
+
+      <div class="col-3 col-xl-4">
+          <div class="numbers" slot="content">
             <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
           </div>
-        </div>
-
       </div>
     </div>
     <!-- Table Info -->
@@ -123,7 +121,8 @@ import VeLine from 'v-charts/lib/line.common'
 import VeGauge from 'v-charts/lib/gauge.common'
 import Chartist from 'chartist';
 import axios from 'axios'
-const queryURL = "http://127.0.0.1:5001/gpuinfo/"
+const queryURL = "http://127.0.0.1:5002/gpuinfo/" //后面需要写入到配置文件
+
 export default {
   components: {
     VeGauge,
@@ -213,6 +212,7 @@ export default {
     }
     return {
       buttonText: "暂停监测",
+      intervalTime: 5000,
       usagerateData: {
           columns: ['时间'],
           rows: [
@@ -225,7 +225,7 @@ export default {
           ]
         },
 
-      tableColumns: ["设备编号", "设备名称", "产品系列", "内存大小", "设定功率"],
+      tableColumns: ["设备编号", "设备名称", "产品系列", "内存大小", "设定功率","工作状态"],
       tableData: [
       ],
       fanData: {
@@ -257,22 +257,6 @@ export default {
           footerText: "固定",
           footerIcon: "ti-pulse"
         },
-        // {
-        //   type: "danger",
-        //   icon: "ti-layout-accordion-merged",
-        //   title: "任务数量",
-        //   value: "23",
-        //   footerText: "正在进行",
-        //   footerIcon: "ti-timer"
-        // },
-        // {
-        //   type: "info",
-        //   icon: "ti-search",
-        //   title: "设备状况",
-        //   value: "正常",
-        //   footerText: "更新",
-        //   footerIcon: "ti-reload"
-        // }
       ],
       memData: [
       ],
@@ -329,6 +313,7 @@ export default {
             console.log(error)
           })
 
+          var tempMemTotol = 0
           for (var i = 0; i < self.statscardsData[0].value; i++) {
             //初始化列表
             this.usagerateData.columns.push('GPU ' + i.toString())
@@ -350,7 +335,7 @@ export default {
             //获取内存信息
             await axios.post(queryURL+api,{ "gpu_index":i
             }).then(function (response) {
-              self.statscardsData[1].value += Number(response.data['mem_total'])
+              tempMemTotol += Number(response.data['mem_total'])
               tableJson["内存大小"] = Number(response.data['mem_total']).toFixed(2) + " GB"
             })
             .catch(function (error) {
@@ -383,9 +368,19 @@ export default {
             .catch(function (error) {
               console.log(error)
             })
+
+            api = "gpu_perfstate"
+            await axios.post(queryURL+api,{ "gpu_index":i
+            }).then(function (response) {
+              tableJson["工作状态"] = response.data['power_state']
+            })
+            .catch(function (error) {
+              console.log(error)
+            })
+
             self.tableData.push(tableJson)
           }
-          self.statscardsData[1].value = self.statscardsData[1].value.toFixed(2) + " GB"
+          self.statscardsData[1].value = tempMemTotol.toFixed(2) + " GB"
 
       },
       async getData() {
@@ -449,6 +444,15 @@ export default {
             .catch(function (error) {
               console.log(error)
             })
+
+            api = "gpu_perfstate"
+            await axios.post(queryURL+api,{ "gpu_index":i
+            }).then(function (response) {
+              self.tableData[i]["工作状态"] = response.data['power_state']
+            })
+            .catch(function (error) {
+              console.log(error)
+            })
         }
       }catch(err){
         console.log(err)
@@ -461,7 +465,7 @@ export default {
       timer() {
           return setInterval(()=>{
               this.getData()
-          },5000)
+          },this.intervalTime)
     }
   },
   mounted() {
