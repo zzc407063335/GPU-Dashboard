@@ -8,7 +8,7 @@ import Dashboard from "@/pages/Dashboard.vue";
 // import Notifications from "@/pages/Notifications.vue";
 // import Icons from "@/pages/Icons.vue";
 // import Typography from "@/pages/Typography.vue";
-// import TableList from "@/pages/TableList.vue";
+import TableList from "@/pages/TableList.vue";
 
 const routes = [
   {
@@ -44,11 +44,14 @@ const routes = [
       //   name: "typography",
       //   component: Typography,
       // },
-      // {
-      //   path: "table-list",
-      //   name: "table-list",
-      //   component: TableList,
-      // }
+      {
+        path: "process-list",
+        name: "process-list",
+        component: TableList,
+        meta: {
+            keepAlive: true // 需要被缓存
+        }
+      }
     ]
   },
   { path: "*", component: NotFound }

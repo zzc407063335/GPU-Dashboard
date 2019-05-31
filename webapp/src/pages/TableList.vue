@@ -13,6 +13,8 @@
 </template>
 <script>
 import { PaperTable } from "@/components";
+import axios from 'axios'
+
 const tableColumns = ["PID", "进程名", "内存占用", "设备编号"];
 const tableData = [
   {
@@ -60,6 +62,42 @@ export default {
         data: [...tableData]
       }
     };
+  },
+  methods: {
+      getData() {
+          axios.get('https://api.coindesk.com/v1/bpi/currentprice.json')
+          .then(function (response){
+            var axisData = (new Date()).toLocaleTimeString().replace(/^\D*/,'');
+            console.log(axisData);
+            console.log(response);
+          })
+      },
+            // 这是一个定时器
+    timer() {
+          return setInterval(()=>{
+              this.getData()
+          },5000)
+    }
+  },
+  mounted() {
+      // console.log("加载完成")
+  },
+  created() {
+      // console.log("创建完成")
+      // this.getData()
+  },
+  activated(){
+      this.timer_id = this.timer()
+
+      // console.log("重新载入")
+  },
+  deactivated() {
+      // console.log("缓存起来")
+      clearInterval(this.timer_id)
+  },
+  beforeDestroy() {
+      // console.log("销毁")
+      clearInterval(this.timer_id)
   }
 };
 </script>

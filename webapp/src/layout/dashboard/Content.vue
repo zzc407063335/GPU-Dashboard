@@ -3,8 +3,15 @@
     <div class="container-fluid">
         <transition name="fade" mode="out-in">
           <!-- your content here -->
-          <router-view></router-view>
+          <keep-alive>
+            <router-view v-if="$route.meta.keepAlive"></router-view>
+          </keep-alive>
         </transition>
+        <transition name="fade" mode="out-in">
+          <!-- your content here -->
+          <router-view v-if="!$route.meta.keepAlive"></router-view>
+        </transition>
+
     </div>
   </div>
 </template>

@@ -3,11 +3,11 @@
     <side-bar>
       <template slot="links">
         <sidebar-link to="/dashboard" name="设备详情" icon="ti-panel"/>
-        <!-- <sidebar-link to="/stats" name="User Profile" icon="ti-user"/>
-        <sidebar-link to="/table-list" name="Table List" icon="ti-view-list-alt"/>
-        <sidebar-link to="/typography" name="Typography" icon="ti-text"/>
-        <sidebar-link to="/icons" name="Icons" icon="ti-pencil-alt2"/>
-        <sidebar-link to="/notifications" name="Notifications" icon="ti-bell"/> -->
+        <!-- <sidebar-link to="/stats" name="User Profile" icon="ti-user"/> -->
+        <sidebar-link to="/process-list" name="进程列表" icon="ti-view-list-alt"/>
+        <!-- <sidebar-link to="/typography" name="Typography" icon="ti-text"/> -->
+        <!-- <sidebar-link to="/icons" name="Icons" icon="ti-pencil-alt2"/> -->
+        <!-- <sidebar-link to="/notifications" name="Notifications" icon="ti-bell"/> -->
       </template>
       <!-- <mobile-menu>
         <li class="nav-item">
