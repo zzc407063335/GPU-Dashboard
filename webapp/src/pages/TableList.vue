@@ -1,5 +1,37 @@
 <template>
+
     <div>
+      <div class="row">
+        <div class="col-md-6 col-xl-4">
+            <div class="card">
+              <div class="card-body">
+                <div>
+                  <div class="row">
+                     <div class="col-5">
+                        <div class="icon-big text-center icon-danger">
+                          <i :class="'ti-link'"></i>
+                        </div>
+                     </div>
+
+                     <div class="col-7 text-center">
+                       <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
+                     </div>
+                  </div>
+                  <hr>
+
+                  <h4><p class="category"> 当前间隔: {{intervalTime/1000}}s </p></h4>
+
+                  <div class="row">
+                    <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',5)"> 5s </p-button></div>
+                    <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',30)"> 30s </p-button></div>
+                    <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',60)"> 60s </p-button></div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+        </div>
+      </div>
       <div class="row">
         <div class="col-md-6 col-12">
             <div class="card">
@@ -46,7 +78,9 @@
     </div>
 </template>
 <script>
-import { PaperTable } from "@/components";
+import { PaperTable, StatsCard } from "@/components";
+import NotificationTemplate from './Notifications/NotificationTemplate';
+
 import VeLine from 'v-charts/lib/line.common'
 const queryURL = "http://127.0.0.1:5002/gpuinfo/" //后面要写到配置文件
 
@@ -55,6 +89,7 @@ import axios from 'axios'
 export default {
   components: {
     VeLine,
+    StatsCard,
     PaperTable
   },
   data() {
@@ -82,6 +117,8 @@ export default {
         'xAxis.0.show': true
     }
     return {
+      intervalTime: 30000,
+      buttonText: "暂停监测",
       gpuCount: 0,
       bar1memData: {
           columns: ['时间'],
@@ -107,40 +144,40 @@ export default {
       },
       tablecolumns: ["PID", "进程名称", "内存占用", "设备编号"],
       tableData: [
-        // {
-        //   pid: 1,
-        //   进程名称: "python",
-        //   内存占用: "$36.738",
-        //   设备编号: "Niger",
-        // },
-        // {
-        //   pid: 2,
-        //   进程名称: "python",
-        //   内存占用: "$23,789",
-        //   设备编号: "Curaçao",
-        // },
-        // {
-        //   pid: 3,
-        //   进程名称: "python",
-        //   内存占用: "$56,142",
-        //   设备编号: "Netherlands",
-        // },
-        // {
-        //   pid: 4,
-        //   进程名称: "python",
-        //   内存占用: "$38,735",
-        //   设备编号: "Korea, South",
-        // },
-        // {
-        //   pid: 5,
-        //   进程名称: "python",
-        //   内存占用: "$63,542",
-        //   设备编号: "Malawi",
-        // }
       ],
       }
   },
   methods: {
+    notifyVueChangeTime(verticalAlign, horizontalAlign, intervalTime) {
+        clearInterval(this.timer_id)
+        this.timer_id = false
+        this.intervalTime = intervalTime * 1000
+        this.timer_id = this.timer()
+        this.$notify({
+          component: NotificationTemplate,
+          icon: "ti-drupal",
+          horizontalAlign: horizontalAlign,
+          verticalAlign: verticalAlign,
+          type: "warning"
+        });
+    },
+    notifyVue(verticalAlign, horizontalAlign) {
+        if(this.timer_id) {
+          this.buttonText="开始监测"
+          clearInterval(this.timer_id)
+          this.timer_id = false
+        } else {
+          this.buttonText="暂停监测"
+          this.timer_id = this.timer()
+        }
+        this.$notify({
+          component: NotificationTemplate,
+          icon: "ti-gift",
+          horizontalAlign: horizontalAlign,
+          verticalAlign: verticalAlign,
+          type: "success"
+        });
+    },
       async getStaticInfo() {
           var api = "gpu_counts"
           var self = this //指向data内的数据
@@ -258,7 +295,7 @@ export default {
       timer() {
           return setInterval(()=>{
               this.getData()
-          },5000)
+          },this.intervalTime)
     }
   },
   mounted() {

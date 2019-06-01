@@ -16,12 +16,40 @@
           </div>
         </stats-card>
       </div>
+      <div class="col-md-6 col-xl-4">
+          <div class="card">
+            <div class="card-body">
+              <div>
+                <div class="row">
+                   <div class="col-5">
+                      <div class="icon-big text-center icon-danger">
+                        <i :class="'ti-link'"></i>
+                      </div>
+                   </div>
 
-      <div class="col-3 col-xl-4">
-          <div class="numbers" slot="content">
-            <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
+                   <div class="col-7 text-center">
+                     <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
+                   </div>
+                </div>
+                <hr>
+
+                <h4><p class="category"> 当前间隔: {{intervalTime/1000}}s </p></h4>
+
+                <div class="row">
+                  <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',5)"> 5s </p-button></div>
+                  <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',30)"> 30s </p-button></div>
+                  <div class="col-4"><p-button size="sm" round outline block @click.native="notifyVueChangeTime('top','right',60)"> 60s </p-button></div>
+                </div>
+              </div>
+
+            </div>
           </div>
       </div>
+      <!-- <div class="col-md-6 col-xl-4">
+           <div class="numbers" slot="content">
+              <p-button round outline block @click.native="notifyVue('top','center')"> {{buttonText}} </p-button>
+            </div>
+      </div> -->
     </div>
     <!-- Table Info -->
     <div class="row">
@@ -131,22 +159,7 @@ export default {
     // ChartCard,
     PaperTable
   },
-  // QUERYS = {
-  //   'gpu_counts': GpuInfoType.GpuGetCounts.name,
-  //   'gpu_name': GpuInfoType.GpuGetDeviceName.name,
-  //   'gpu_brand': GpuInfoType.GpuGetDeviceBrand.name,
-  //   'gpu_pmode': GpuInfoType.GpuGetDevicePersistenceModel.name, # persistence mode
-  //   'gpu_uuid': GpuInfoType.GpuGetDeviceUUID.name,
-  //   'gpu_fan': GpuInfoType.GpuGetDeviceFanSpeed.name,
-  //   'gpu_perfstate': GpuInfoType.GpuGetDevicePerformanceState.name,
-  //   'gpu_mem': GpuInfoType.GpuGetDeviceMemory.name,
-  //   'gpu_bar1mem': GpuInfoType.GpuGetDeviceBar1Memory.name,
-  //   'gpu_temp': GpuInfoType.GpuGetDeviceTemperature.name,
-  //   'gpu_util': GpuInfoType.GpuGetDeviceUtilization.name,
-  //   'gpu_power': GpuInfoType.GpuGetDevicePowerUsage.name,
-  //   'gpu_powerinfo': GpuInfoType.GpuGetDevicePowerInfo.name,
-  //   'gpu_proc': GpuInfoType.GpuGetDeviceProcess.name
-  // }
+
   /**
    * Chart data used to render stats, charts. Should be replaced with server data
    */
@@ -212,7 +225,7 @@ export default {
     }
     return {
       buttonText: "暂停监测",
-      intervalTime: 5000,
+      intervalTime: 30000,
       usagerateData: {
           columns: ['时间'],
           rows: [
@@ -239,7 +252,6 @@ export default {
             { '时间': 'NA5'}
           ]
         },
-
       statscardsData: [
         {
           type: "warning",
@@ -285,22 +297,35 @@ export default {
     };
   },
   methods: {
-      notifyVue(verticalAlign, horizontalAlign) {
-        if(this.timer_id) {
-          this.buttonText="开始监测"
+      notifyVueChangeTime(verticalAlign, horizontalAlign, intervalTime) {
           clearInterval(this.timer_id)
           this.timer_id = false
-        } else {
-          this.buttonText="暂停监测"
+          this.intervalTime = intervalTime * 1000
           this.timer_id = this.timer()
-        }
-        this.$notify({
-          component: NotificationTemplate,
-          icon: "ti-gift",
-          horizontalAlign: horizontalAlign,
-          verticalAlign: verticalAlign,
-          type: "success"
-        });
+          this.$notify({
+            component: NotificationTemplate,
+            icon: "ti-drupal",
+            horizontalAlign: horizontalAlign,
+            verticalAlign: verticalAlign,
+            type: "warning"
+          });
+      },
+      notifyVue(verticalAlign, horizontalAlign) {
+          if(this.timer_id) {
+            this.buttonText="开始监测"
+            clearInterval(this.timer_id)
+            this.timer_id = false
+          } else {
+            this.buttonText="暂停监测"
+            this.timer_id = this.timer()
+          }
+          this.$notify({
+            component: NotificationTemplate,
+            icon: "ti-gift",
+            horizontalAlign: horizontalAlign,
+            verticalAlign: verticalAlign,
+            type: "success"
+          });
       },
       async getStaticInfo() {
           var api = "gpu_counts"
@@ -465,7 +490,7 @@ export default {
       timer() {
           return setInterval(()=>{
               this.getData()
-          },this.intervalTime)
+      },this.intervalTime)
     }
   },
   mounted() {
