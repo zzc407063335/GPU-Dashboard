@@ -40,7 +40,7 @@ def send_task_2_trainbox(task_name="default", dataset_name="default",file_path="
     msg = {'task_name': task_name,
            'dataset_name': dataset_name,
            'file_path': file_path
-           }
+    }
     url = url + api
     r = send_rest_api(url, msg)
     # if

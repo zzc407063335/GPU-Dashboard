@@ -287,6 +287,7 @@ def GpuGetDeviceProcess(gpu_index):
         error_info = handleError(err)
         return error_info
     else:
+        # print(info)
         return info
 
 # this is not exectued when module is imported

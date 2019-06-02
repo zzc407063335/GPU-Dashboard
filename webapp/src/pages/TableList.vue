@@ -274,7 +274,8 @@ export default {
               })
               // console.log(proc_num,processes)
               for (var j = 1; j <= proc_num; j++) {
-                  var taskJson = {}
+                  var taskJson = {processes}
+                  console.log(processes)
                   var _process = processes['proc'+j.toString()]
                   taskJson["pid"] = _process['pid']
                   taskJson['进程名称'] = _process['name']

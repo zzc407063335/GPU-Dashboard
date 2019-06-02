@@ -1,19 +1,20 @@
-import os
 # -*- coding: utf-8 -*-
-import rest_fun
+from conn_profile import *
 from pynvml import nvmlInit
-import gpustatus_fun
 from flask import Flask
 from flask_cors import CORS
 from flask_restful import reqparse, abort, Api, Resource
-from enum import Enum,unique
-import json, threading
+from enum import Enum, unique
+from multiprocessing import pool
+import json,time,threading,gpustatus_fun,rest_fun,os
 
 # 中间件调用训练组件的rest api
+
 
 @unique
 class TodosType(Enum):
     train_model = 0
+
 
 @unique
 class GpuInfoType(Enum):
@@ -39,7 +40,7 @@ CORS(app)
 # parser = reqparse.RequestParser()
 
 
-
+# TODOS 目前没有用到
 TODOS = {
     'train_model': {'func_name': TodosType.train_model.name},
 }
@@ -48,7 +49,7 @@ QUERYS = {
     'gpu_counts': GpuInfoType.GpuGetCounts.name,
     'gpu_name': GpuInfoType.GpuGetDeviceName.name,
     'gpu_brand': GpuInfoType.GpuGetDeviceBrand.name,
-    'gpu_pmode': GpuInfoType.GpuGetDevicePersistenceModel.name, # persistence mode
+    'gpu_pmode': GpuInfoType.GpuGetDevicePersistenceModel.name,  # persistence mode
     'gpu_uuid': GpuInfoType.GpuGetDeviceUUID.name,
     'gpu_fan': GpuInfoType.GpuGetDeviceFanSpeed.name,
     'gpu_perfstate': GpuInfoType.GpuGetDevicePerformanceState.name,
@@ -70,19 +71,23 @@ def abort_if_todo_doesnt_exist(id):
         msg = "error api call"
         abort(404, message=msg)
 
+
 def todo_exe_fun(todo_id, args):
     func_name = TODOS[todo_id]['func_name']
     if func_name == TodosType.train_model.name:
-        exe_fun = getattr(rest_fun,func_name)
-        th = threading.Thread(target=exe_fun,args=(args['file_path'],args['task_name'],args['dataset_name'],)) # 消耗时间，起线程运行
+        exe_fun = getattr(rest_fun, func_name)
+        th = threading.Thread(target=exe_fun, args=(
+            args['file_path'], args['task_name'], args['dataset_name'],))  # 消耗时间，起线程运行
         th.start()
     else:
         print("error func")
 
 # 根据函数名字调用函数
+
+
 def gpuinfo_exe_fun(query_id, args):
     # 不带参数，获取GPU数量
-    if  QUERYS[query_id] == GpuInfoType.GpuGetCounts.name:
+    if QUERYS[query_id] == GpuInfoType.GpuGetCounts.name:
         exe_fun = getattr(gpustatus_fun, GpuInfoType.GpuGetCounts.name)
         res = exe_fun()
         return res
@@ -100,6 +105,8 @@ def gpuinfo_exe_fun(query_id, args):
 
 # Todo
 # shows a single todo item and lets you delete a todo item
+
+
 class Todo(Resource):
     def __init__(self):
         self.parser = reqparse.RequestParser()
@@ -111,7 +118,6 @@ class Todo(Resource):
         abort_if_todo_doesnt_exist(todo_id)
         return TODOS[todo_id]
 
-
     def post(self, todo_id):
         abort_if_todo_doesnt_exist(todo_id)
         args = self.parser.parse_args()
@@ -120,6 +126,8 @@ class Todo(Resource):
         return TODOS[todo_id], 200
 
 # GPU Query
+
+
 class GPUQuery(Resource):
     def __init__(self):
         self.parser = reqparse.RequestParser()
@@ -129,19 +137,25 @@ class GPUQuery(Resource):
         abort_if_todo_doesnt_exist(query_id)
         return QUERYS[query_id]
 
-
     def post(self, query_id):
         abort_if_todo_doesnt_exist(query_id)
         args = self.parser.parse_args()
         res = gpuinfo_exe_fun(query_id, args)
-        # train(args['file_path'], args['task_name'], args['dataset_name'])
         return res, 200
+
+
+def local_service_start():
+    app.run(host="0.0.0.0", port=LOCAL_PORT)  # 注意 本机测试和容器内测试端口要变动
+
+def remote_service_start():
+    while True:
+        time.sleep(5)
+        print("simulation")
 
 api.add_resource(Todo, '/todos/<todo_id>')
 api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
 
 if __name__ == '__main__':
     nvmlInit()
-    # app.run(host="0.0.0.0",port=5001) # 注意 本机测试和容器内测试端口要变动
-
-    app.run(host="0.0.0.0",port=5002) # 注意 本机测试和容器内测试端口要变动
+    local_service_start()
+    

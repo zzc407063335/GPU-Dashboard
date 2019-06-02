@@ -18,17 +18,18 @@ def send_rest_api(url,msg):
     except Exception as e:
         print("Request Error:", e)
 
-def send_task_over_2_middle_box(task_id, model_name, file_path):
-    api = "/trainbox2mid/task_over"
-    url = MIDDLE_BOX_CONTAINER_NAME + ":" + MIDDLE_BOX_CONTAINER_PORT
-    url += api
-    # 这里直接string就好
-    msg = { 'task_id': task_id,
-            'model_name': model_name,
-            'file_path': file_path
-    }
-    r = send_rest_api(url,msg)
-    print(r.status_code)
+def send_task_over_2_server(task_id, model_name, file_path):
+    print("send_task_over_2_server")
+    # api = "/trainbox2mid/task_over"
+    # url = MIDDLE_BOX_CONTAINER_NAME + ":" + MIDDLE_BOX_CONTAINER_PORT
+    # url += api
+    # # 这里直接string就好
+    # msg = { 'task_id': task_id,
+    #         'model_name': model_name,
+    #         'file_path': file_path
+    # }
+    # r = send_rest_api(url,msg)
+    # print(r.status_code)
     # if
 
 
@@ -57,5 +58,5 @@ def train_model(path="./",task_name = "",dataset_name = ""):
     # 这里需要添加差错控制，反馈给用户
     # notify middle_box
     # time.sleep(5)
-    send_task_over_2_middle_box(task_id=task_name, model_name="cnn", file_path=path)
+    send_task_over_2_server(task_id=task_name, model_name="cnn", file_path=path)
 

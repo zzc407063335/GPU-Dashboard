@@ -11,3 +11,9 @@ agent/.DS_Store
 webapp/node_modules
 webapp/*.md
 webapp/package-lock.json 
+webapp/dist
+.vscode/
+.ipynb_checkpoints/
+notebook.ipynb
+MNIST/
+
