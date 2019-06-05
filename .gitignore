@@ -3,6 +3,7 @@
 *.txt
 data/
 .idea/
+agent/
 __pycache__/
 trainbox/__pycache__/
 agent/__pycache__/
@@ -16,4 +17,4 @@ webapp/dist
 .ipynb_checkpoints/
 notebook.ipynb
 MNIST/
-
+result/

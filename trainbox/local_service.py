@@ -248,8 +248,26 @@ def GpuGetDevicePowerInfo(gpu_index):
         info['powLimitStrMax'] = powLimitStrMax
         return info
 
+# 返回gpu的进程占用数量
+def GpuGetDeviceProcessCounts(gpu_index):
+    if not ValidIndex(gpu_index):
+        error_info = {'error_info': 'error gpu index'}
+        return error_info
+    try:
+        handle = nvmlDeviceGetHandleByIndex(gpu_index)
+        proc = nvmlDeviceGetComputeRunningProcesses(handle)
+        info = {}
+        proc_counts = len(proc)
+        info['proc_counts'] = proc_counts
+    except NVMLError as err:
+        error_info = handleError(err)
+        return error_info
+    else:
+        # print(info)
+        return info
+
 # 返回gpu的进程占用情况
-def GpuGetDeviceProcess(gpu_index):
+def GpuGetDeviceProcessDetails(gpu_index):
     if not ValidIndex(gpu_index):
         error_info = {'error_info': 'error gpu index'}
         return error_info
@@ -293,4 +311,4 @@ def GpuGetDeviceProcess(gpu_index):
 # this is not exectued when module is imported
 if __name__ == "__main__":
     nvmlInit()
-    print(GpuGetDeviceProcess(0))
+    print(GpuGetDeviceProcessDetails(0))

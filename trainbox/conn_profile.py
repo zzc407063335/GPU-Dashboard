@@ -1,9 +1,16 @@
 # 定义一些训练组件和中间件的接口数据
 
-# MIDDLE_BOX_CONTAINER_NAME = "http://middle_box" # 这里路由需要用docker-compose接入同一个Network并命名container_name为train_box
-# MIDDLE_BOX_CONTAINER_PORT = "5001"
 
-SERVER_IP = '39.105.71.172'
-REMOTE_PORT = 5678
+PROTOCOL = 'http://'
+SERVER_IP = '127.0.0.1'
+REMOTE_PORT = 8000
+
+USER_NAME = "zzc997"
+USER_PASS = "zzc997997"
 
 LOCAL_PORT = 8997
+LOCAL_ROOT_DIR = '/home/zzc/data'
+LOCAL_RESULT_DIR = './result'
+
+TASK_COUNTS_MAX = 5
+REGISTER_GPU_COUNT = 0

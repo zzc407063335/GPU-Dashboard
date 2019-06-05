@@ -5,8 +5,8 @@ from flask import Flask
 from flask_cors import CORS
 from flask_restful import reqparse, abort, Api, Resource
 from enum import Enum, unique
-from multiprocessing import pool
-import json,time,threading,gpustatus_fun,rest_fun,os
+from multiprocessing import Pool
+import json,time,threading,local_service,remote_service,os
 
 # 中间件调用训练组件的rest api
 
@@ -31,7 +31,8 @@ class GpuInfoType(Enum):
     GpuGetDeviceUtilization = 10
     GpuGetDevicePowerUsage = 11
     GpuGetDevicePowerInfo = 12
-    GpuGetDeviceProcess = 13
+    GpuGetDeviceProcessDetails = 13
+    GpuGetDeviceProcessCounts = 14
 
 
 app = Flask(__name__)
@@ -59,7 +60,8 @@ QUERYS = {
     'gpu_util': GpuInfoType.GpuGetDeviceUtilization.name,
     'gpu_power': GpuInfoType.GpuGetDevicePowerUsage.name,
     'gpu_powerinfo': GpuInfoType.GpuGetDevicePowerInfo.name,
-    'gpu_proc': GpuInfoType.GpuGetDeviceProcess.name
+    'gpu_proc': GpuInfoType.GpuGetDeviceProcessDetails.name,
+    'gpu_procounts':GpuInfoType.GpuGetDeviceProcessCounts.name
 }
 
 
@@ -75,7 +77,7 @@ def abort_if_todo_doesnt_exist(id):
 def todo_exe_fun(todo_id, args):
     func_name = TODOS[todo_id]['func_name']
     if func_name == TodosType.train_model.name:
-        exe_fun = getattr(rest_fun, func_name)
+        exe_fun = getattr(remote_service, func_name)
         th = threading.Thread(target=exe_fun, args=(
             args['file_path'], args['task_name'], args['dataset_name'],))  # 消耗时间，起线程运行
         th.start()
@@ -88,12 +90,12 @@ def todo_exe_fun(todo_id, args):
 def gpuinfo_exe_fun(query_id, args):
     # 不带参数，获取GPU数量
     if QUERYS[query_id] == GpuInfoType.GpuGetCounts.name:
-        exe_fun = getattr(gpustatus_fun, GpuInfoType.GpuGetCounts.name)
+        exe_fun = getattr(local_service, GpuInfoType.GpuGetCounts.name)
         res = exe_fun()
         return res
 
     else:
-        exe_fun = getattr(gpustatus_fun, QUERYS[query_id])
+        exe_fun = getattr(local_service, QUERYS[query_id])
         try:
             res = exe_fun(int(args['gpu_index']))
         # 调用错误异常
@@ -144,18 +146,27 @@ class GPUQuery(Resource):
         return res, 200
 
 
-def local_service_start():
-    app.run(host="0.0.0.0", port=LOCAL_PORT)  # 注意 本机测试和容器内测试端口要变动
+def local_service_start(PORT):
+    nvmlInit()
+    try:
+        app.run(host="0.0.0.0", port=PORT)  # 注意 本机测试和容器内测试端口要变动
+    except Exception as err:
+        print(err)
 
-def remote_service_start():
-    while True:
-        time.sleep(5)
-        print("simulation")
+def remote_service_start(username, password, protocol='http://', server_ip='http://127.0.0.1', port=8000):
+    nvmlInit()
+    try:
+        remote_service.connect_to_remote_server(username, password, protocol , server_ip, port)
+    except Exception as err:
+        print(err)
 
 api.add_resource(Todo, '/todos/<todo_id>')
 api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
 
 if __name__ == '__main__':
-    nvmlInit()
-    local_service_start()
-    
+
+    pool=Pool(2)
+    pool.apply_async(local_service_start, (LOCAL_PORT, ))
+    pool.apply_async(remote_service_start,(USER_NAME,USER_PASS, PROTOCOL, SERVER_IP, REMOTE_PORT,))
+    pool.close()
+    pool.join()
