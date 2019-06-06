@@ -87,19 +87,19 @@ def compress_model_result(data_dir, method):
             modelfile_name = 'result.tar.gz'
             import tarfile
             tar = tarfile.open('result.tar.gz', "w:gz")
-            startdir = conn_profile.LOCAL_RESULT_DIR
+            startdir = os.path.join(data_dir, conn_profile.LOCAL_RESULT_DIR)
 
-            # 注意此时已经切换了目录到脚本目录，直接读取result文件下的东西
             for root, dir, files in os.walk(startdir):
                 for file in files:
                     pathfile = os.path.join(root, file)
                     tar.add(pathfile)
             tar.close()
+
         elif method == 'zip':
             modelfile_name = 'result.zip'
             import zipfile
             z = zipfile.ZipFile('result.zip', 'w', zipfile.ZIP_DEFLATED)
-            startdir = conn_profile.LOCAL_RESULT_DIR
+            startdir = os.path.join(data_dir, conn_profile.LOCAL_RESULT_DIR)
 
             for dirpath, dir, filenames in os.walk(startdir):
                 for filename in filenames:
@@ -113,10 +113,12 @@ def compress_model_result(data_dir, method):
         return modelfile_name
 
 
-def run_script(data_dir, script_name):
+def run_script(data_dir, script_name, gpu_index):
     # 目前支持python训练文件
-    order = 'python '
-    order = order + os.path.join(data_dir, script_name)
+    # cd = 'cd {dir} && mkdir {result} && '.format(dir = data_dir, result=conn_profile.LOCAL_RESULT_DIR_NAME)
+    assign_gup = 'CUDA_VISIBLE_DEVICES={index}'.format(index=gpu_index)
+    order = ' python '
+    order = assign_gup + order + os.path.join(data_dir, script_name)
     print(order)
     proc_counts = 0
     for index in range(conn_profile.REGISTER_GPU_COUNT):
@@ -131,11 +133,13 @@ def run_script(data_dir, script_name):
     try:
         pwd = os.getcwd()
         os.chdir(data_dir)
+        print(os.getcwd())
         if not os.path.exists(conn_profile.LOCAL_RESULT_DIR):
             os.makedirs(conn_profile.LOCAL_RESULT_DIR)  # 创建结果目录
-        res = os.system(order)  # 执行shell命令
+        # 执行shell命令
+        res = os.system(order)
+        # shell 切回服务目录
         os.chdir(pwd)
-        print("res:", res)
         if res == 0:
             print("success")
         else:
@@ -143,25 +147,20 @@ def run_script(data_dir, script_name):
     except Exception as e:
         print("error:", e)
 
-
 def train_model(client, task, data_dir):
-    return
     try:
         client.get_task_data(task, data_dir=data_dir)
         script_name = task['script_file'].split('/')[-1]  # 默认python文件
         datafile_name = task['data_file'].split('/')[-1]  # 目前默认tar.gz
         compress_method = decompress_datafile(data_dir, datafile_name)
-        run_script(data_dir, script_name)
+        run_script(data_dir, script_name, task['gpu_id'])
         modelfile_name = compress_model_result(data_dir, compress_method)
-
-        # client.post_task_result(task['id'])
+        logfile = 'gpu_test.py'
+        client.post_task_result(task['id'], task['gpu_id'],printed_str='',model_file_path=os.path.join(data_dir,modelfile_name), log_file_path=os.path.join(data_dir,logfile))
     except Exception as err:
         print(err)
     else:
         return data_dir
-
-#     send_task_over_2_server(
-#         task_id=task_name, model_name="cnn", file_path=path)
 
 
 async def request_for_tasks(client, q_tasks):
@@ -180,6 +179,7 @@ async def request_for_tasks(client, q_tasks):
             #     tasks.extend(client.request_tasks(server['id']))
             # print(tasks)
             tasks = client.request_tasks()
+            # print(tasks)
         except Exception as err:
             print(err)
             continue
@@ -191,17 +191,20 @@ async def request_for_tasks(client, q_tasks):
 
         for i in range(0, len(tasks)):
             cur_task = tasks[i]  # 取出任务
+            # cur_task['gpu_id'] = servers[0]['id'] # 取出gpu_id
+            cur_task['gpu_id'] = 1
+            # print(cur_task)
             await q_tasks.put(cur_task)
-            # print("add tasks to queue", q_tasks.qsize())
 
 
 async def process_tasks(client, q_tasks):
 
     while True:
-        # import ipdb; ipdb.set_trace()
         _task = await q_tasks.get()
         _dir = ''.join([hex(i) for i in os.urandom(10)])
         local_dir = conn_profile.LOCAL_ROOT_DIR  # 封装注意修改LOCAL_ROOT_DIR
+
+        # 后面的data_dir 都是这个目录，即用户文件目录
         _dir = os.path.join(local_dir, _dir)
         # print(_dir)
         # print(_task)
@@ -233,6 +236,7 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
     register_gpu_index = []
 
     conn_profile.REGISTER_GPU_COUNT = gpu_count
+
     # 目前把设备都注册到服务器上
     for i in range(0, gpu_count):
         register_gpu_index.append(i)
@@ -272,5 +276,5 @@ if __name__ == '__main__':
     nvmlInit()
     # loop = asyncio.get_event_loop()
     # loop.run_until_complete( asyncio.ensure_future(train_model(123)))
-    connect_to_remote_server('zzc997', 'zzc997997')
+    connect_to_remote_server('zzczzc', 'zzc997997')
     # print(os.path.exists(conn_profile.LOCAL_ROOT_DIR))
