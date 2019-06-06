@@ -2,13 +2,13 @@
 import requests
 import time
 from threading import Thread
-import os
+import os, subprocess
 import sys
 import psutil
 import asyncio
 from pynvml import *
 from pprint import pprint
-import conn_profile
+import conn_profile as cf
 from firstquadrants import TaskClient
 import local_service as ls
 
@@ -30,23 +30,6 @@ def send_rest_api(url, msg):
         return r
     except Exception as e:
         print("Request Error:", e)
-
-
-# def send_task_over_2_server(client, modelfile_name):
-    # print("send_task_over_2_server")
-
-    # api = "/trainbox2mid/task_over"
-    # url = MIDDLE_BOX_CONTAINER_NAME + ":" + MIDDLE_BOX_CONTAINER_PORT
-    # url += api
-    # # 这里直接string就好
-    # msg = { 'task_id': task_id,
-    #         'model_name': model_name,
-    #         'file_path': file_path
-    # }
-    # r = send_rest_api(url,msg)
-    # print(r.status_code)
-    # if
-
 
 def decompress_datafile(data_dir, file_name):
     # 文件名错误怎么办？
@@ -86,9 +69,8 @@ def compress_model_result(data_dir, method):
         if method == 'tar.gz':
             modelfile_name = 'result.tar.gz'
             import tarfile
-            tar = tarfile.open('result.tar.gz', "w:gz")
-            startdir = os.path.join(data_dir, conn_profile.LOCAL_RESULT_DIR)
-
+            tar = tarfile.open(os.path.join(data_dir, modelfile_name), "w:gz")
+            startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
             for root, dir, files in os.walk(startdir):
                 for file in files:
                     pathfile = os.path.join(root, file)
@@ -98,9 +80,8 @@ def compress_model_result(data_dir, method):
         elif method == 'zip':
             modelfile_name = 'result.zip'
             import zipfile
-            z = zipfile.ZipFile('result.zip', 'w', zipfile.ZIP_DEFLATED)
-            startdir = os.path.join(data_dir, conn_profile.LOCAL_RESULT_DIR)
-
+            z = zipfile.ZipFile(os.path.join(data_dir, modelfile_name), 'w', zipfile.ZIP_DEFLATED)
+            startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
             for dirpath, dir, filenames in os.walk(startdir):
                 for filename in filenames:
                     z.write(os.path.join(dirpath, filename))
@@ -115,31 +96,39 @@ def compress_model_result(data_dir, method):
 
 def run_script(data_dir, script_name, gpu_index):
     # 目前支持python训练文件
-    # cd = 'cd {dir} && mkdir {result} && '.format(dir = data_dir, result=conn_profile.LOCAL_RESULT_DIR_NAME)
-    assign_gup = 'CUDA_VISIBLE_DEVICES={index}'.format(index=gpu_index)
-    order = ' python '
-    order = assign_gup + order + os.path.join(data_dir, script_name)
-    print(order)
+
+    cmd = 'CUDA_VISIBLE_DEVICES={index} python {script}'.format(index=gpu_index, script=script_name)
+    
+    # 创建result 文件夹
+    os.makedirs(os.path.join(data_dir, cf.LOCAL_RESULT_DIR))
+    
+    log_file = os.path.join(data_dir,cf.LOCAL_RESULT_DIR, cf.LOG_INFO_NAME)
+    err_file = os.path.join(data_dir,cf.LOCAL_RESULT_DIR, cf.LOG_ERROR_NAME)
+    # 创建日志和错误文件log
+    os.mknod(log_file)
+    os.mknod(err_file)
+
     proc_counts = 0
-    for index in range(conn_profile.REGISTER_GPU_COUNT):
+    for index in range(cf.REGISTER_GPU_COUNT):
         proc_counts += ls.GpuGetDeviceProcessCounts(index)['proc_counts']
 
-    while proc_counts > conn_profile.TASK_COUNTS_MAX:
+    while proc_counts > cf.TASK_COUNTS_MAX:
         time.sleep(60)  # 等待释放
         proc_counts = 0
-        for index in range(conn_profile.REGISTER_GPU_COUNT):
+        for index in range(cf.REGISTER_GPU_COUNT):
             proc_counts += ls.GpuGetDeviceProcessCounts(index)['proc_counts']
 
     try:
-        pwd = os.getcwd()
-        os.chdir(data_dir)
-        print(os.getcwd())
-        if not os.path.exists(conn_profile.LOCAL_RESULT_DIR):
-            os.makedirs(conn_profile.LOCAL_RESULT_DIR)  # 创建结果目录
-        # 执行shell命令
-        res = os.system(order)
-        # shell 切回服务目录
-        os.chdir(pwd)
+        print("start train")
+        stdout = open(log_file,'w+')
+        stderr = open(err_file,'w+')
+        subporc = subprocess.Popen(args=cmd,shell=True,stdout=stdout.fileno(),stderr=stderr.fileno(), cwd=data_dir)
+        subporc.communicate()
+        stdout.flush()
+        stderr.flush()
+        stdout.close()
+        stderr.close()
+        res = subporc.returncode
         if res == 0:
             print("success")
         else:
@@ -173,11 +162,6 @@ async def request_for_tasks(client, q_tasks):
     while True:
         await asyncio.sleep(5)
         try:
-            # print("request")
-            # tasks = []
-            # for server in servers:
-            #     tasks.extend(client.request_tasks(server['id']))
-            # print(tasks)
             tasks = client.request_tasks()
             # print(tasks)
         except Exception as err:
@@ -202,7 +186,7 @@ async def process_tasks(client, q_tasks):
     while True:
         _task = await q_tasks.get()
         _dir = ''.join([hex(i) for i in os.urandom(10)])
-        local_dir = conn_profile.LOCAL_ROOT_DIR  # 封装注意修改LOCAL_ROOT_DIR
+        local_dir = cf.LOCAL_ROOT_DIR  # 封装注意修改LOCAL_ROOT_DIR
 
         # 后面的data_dir 都是这个目录，即用户文件目录
         _dir = os.path.join(local_dir, _dir)
@@ -235,7 +219,7 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
 
     register_gpu_index = []
 
-    conn_profile.REGISTER_GPU_COUNT = gpu_count
+    cf.REGISTER_GPU_COUNT = gpu_count
 
     # 目前把设备都注册到服务器上
     for i in range(0, gpu_count):
@@ -251,14 +235,14 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
 
     main_loop = asyncio.get_event_loop()
     q_tasks = asyncio.Queue(
-        loop=main_loop, maxsize=conn_profile.TASK_COUNTS_MAX)
+        loop=main_loop, maxsize=cf.TASK_COUNTS_MAX)
     coroutines = []
 
     req_co = request_for_tasks(client, q_tasks)
     coroutines.append(req_co)
 
     # 开启多个消费者
-    for _ in range(conn_profile.TASK_COUNTS_MAX):
+    for _ in range(cf.TASK_COUNTS_MAX):
         proc_co = process_tasks(client, q_tasks)
         coroutines.append(proc_co)
 
@@ -277,4 +261,4 @@ if __name__ == '__main__':
     # loop = asyncio.get_event_loop()
     # loop.run_until_complete( asyncio.ensure_future(train_model(123)))
     connect_to_remote_server('zzczzc', 'zzc997997')
-    # print(os.path.exists(conn_profile.LOCAL_ROOT_DIR))
+    # print(os.path.exists(cf.LOCAL_ROOT_DIR))
