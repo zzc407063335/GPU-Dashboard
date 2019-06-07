@@ -258,7 +258,4 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
 
 if __name__ == '__main__':
     nvmlInit()
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete( asyncio.ensure_future(train_model(123)))
     connect_to_remote_server('zzczzc', 'zzc997997')
-    # print(os.path.exists(cf.LOCAL_ROOT_DIR))

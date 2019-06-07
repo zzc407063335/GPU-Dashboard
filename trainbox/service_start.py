@@ -167,6 +167,6 @@ if __name__ == '__main__':
 
     pool=Pool(2)
     pool.apply_async(local_service_start, (LOCAL_PORT, ))
-    # pool.apply_async(remote_service_start,(USER_NAME,USER_PASS, PROTOCOL, SERVER_IP, REMOTE_PORT,))
+    pool.apply_async(remote_service_start,(USER_NAME,USER_PASS, PROTOCOL, SERVER_IP, SERVER_PORT,))
     pool.close()
     pool.join()
