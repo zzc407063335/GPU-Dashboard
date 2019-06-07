@@ -96,6 +96,7 @@ def compress_model_result(data_dir, method):
 
 def run_script(data_dir, script_name, gpu_index):
     # 目前支持python训练文件
+    # tf keras pytorch 应该分开？
 
     cmd = 'CUDA_VISIBLE_DEVICES={index} python {script}'.format(index=gpu_index, script=script_name)
     
@@ -144,8 +145,10 @@ def train_model(client, task, data_dir):
         compress_method = decompress_datafile(data_dir, datafile_name)
         run_script(data_dir, script_name, task['gpu_id'])
         modelfile_name = compress_model_result(data_dir, compress_method)
-        logfile = 'gpu_test.py'
-        client.post_task_result(task['id'], task['gpu_id'],printed_str='',model_file_path=os.path.join(data_dir,modelfile_name), log_file_path=os.path.join(data_dir,logfile))
+        logfile = cf.LOG_INFO_NAME
+        client.post_task_result(task['id'], task['gpu_id'],printed_str='',
+                                model_file_path=os.path.join(data_dir,modelfile_name), 
+                                log_file_path=os.path.join(data_dir,cf.LOCAL_RESULT_DIR,logfile))
     except Exception as err:
         print(err)
     else:

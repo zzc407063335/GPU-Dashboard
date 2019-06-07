@@ -1,24 +1,30 @@
-'''Train a simple deep CNN on the CIFAR10 small images dataset.
-
+'''
+#Train a simple deep CNN on the CIFAR10 small images dataset.
 It gets to 75% validation accuracy in 25 epochs, and 79% after 50 epochs.
 (it's still underfitting at that point, though).
 '''
 
 from __future__ import print_function
-# import keras
-from tensorflow import keras as keras
-from tensorflow.keras import backend
-from tensorflow.keras.datasets import cifar10
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten
-from tensorflow.keras.layers import Conv2D, MaxPooling2D
-import os,sys
+import keras
+import tensorflow as tf
+from keras.datasets import cifar10
+from keras.preprocessing.image import ImageDataGenerator
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation, Flatten
+from keras.layers import Conv2D, MaxPooling2D
+from keras.backend.tensorflow_backend import set_session
+import os
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+config = tf.ConfigProto()
+# config.gpu_options.per_process_gpu_memory_fraction = 0.3
+config.gpu_options.allow_growth = True
+session = tf.Session(config=config)
+set_session(session)
 
 batch_size = 32
 num_classes = 10
-epochs = 2
+epochs = 100
 data_augmentation = True
 num_predictions = 20
 save_dir = os.path.join(os.getcwd(), 'saved_models')
@@ -58,7 +64,7 @@ model.add(Dense(num_classes))
 model.add(Activation('softmax'))
 
 # initiate RMSprop optimizer
-opt = keras.optimizers.RMSprop(lr=0.0001, decay=1e-6)
+opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 
 # Let's train the model using RMSprop
 model.compile(loss='categorical_crossentropy',
@@ -76,7 +82,8 @@ if not data_augmentation:
               batch_size=batch_size,
               epochs=epochs,
               validation_data=(x_test, y_test),
-              shuffle=True)
+              shuffle=True,
+              steps_per_epoch=x_train.shape[0])
 else:
     print('Using real-time data augmentation.')
     # This will do preprocessing and realtime data augmentation:
@@ -118,8 +125,9 @@ else:
                                      batch_size=batch_size),
                         epochs=epochs,
                         validation_data=(x_test, y_test),
+                        steps_per_epoch=x_train.shape[0],
                         workers=4,
-                        use_multiprocessing = True)
+                        use_multiprocessing=True)
 
 # Save model and weights
 if not os.path.isdir(save_dir):
