@@ -71,7 +71,7 @@ def compress_model_result(data_dir, method):
             import tarfile
             tar = tarfile.open(os.path.join(data_dir, modelfile_name), "w:gz")
             startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-            for root, dir, files in os.walk(startdir):
+            for root, _, files in os.walk(startdir):
                 for file in files:
                     pathfile = os.path.join(root, file)
                     tar.add(pathfile)
@@ -82,7 +82,7 @@ def compress_model_result(data_dir, method):
             import zipfile
             z = zipfile.ZipFile(os.path.join(data_dir, modelfile_name), 'w', zipfile.ZIP_DEFLATED)
             startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-            for dirpath, dir, filenames in os.walk(startdir):
+            for dirpath, _, filenames in os.walk(startdir):
                 for filename in filenames:
                     z.write(os.path.join(dirpath, filename))
             z.close()
@@ -125,15 +125,15 @@ def run_script(data_dir, script_name, gpu_index):
         stderr = open(err_file,'w+')
         subporc = subprocess.Popen(args=cmd,shell=True,stdout=stdout.fileno(),stderr=stderr.fileno(), cwd=data_dir)
         subporc.communicate()
-        stdout.flush()
-        stderr.flush()
-        stdout.close()
-        stderr.close()
         res = subporc.returncode
         if res == 0:
             print("success")
         else:
-            print("error")
+            print("error when running script")
+        stdout.flush()
+        stderr.flush()
+        stdout.close()
+        stderr.close()
     except Exception as e:
         print("error:", e)
 
@@ -143,7 +143,11 @@ def train_model(client, task, data_dir):
         script_name = task['script_file'].split('/')[-1]  # 默认python文件
         datafile_name = task['data_file'].split('/')[-1]  # 目前默认tar.gz
         compress_method = decompress_datafile(data_dir, datafile_name)
-        run_script(data_dir, script_name, task['gpu_id'])
+        '''
+        fix this place
+        '''
+        # run_script(data_dir, script_name, task['gpu_id'])
+        run_script(data_dir, script_name, 1)
         modelfile_name = compress_model_result(data_dir, compress_method)
         logfile = cf.LOG_INFO_NAME
         client.post_task_result(task['id'], task['gpu_id'],printed_str='',
@@ -179,7 +183,7 @@ async def request_for_tasks(client, q_tasks):
         for i in range(0, len(tasks)):
             cur_task = tasks[i]  # 取出任务
             # cur_task['gpu_id'] = servers[0]['id'] # 取出gpu_id
-            cur_task['gpu_id'] = 1
+            cur_task['gpu_id'] = servers[0]['id']
             # print(cur_task)
             await q_tasks.put(cur_task)
 
