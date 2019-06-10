@@ -10,12 +10,6 @@ import json,time,threading,local_service,remote_service,os
 
 # 中间件调用训练组件的rest api
 
-
-@unique
-class TodosType(Enum):
-    train_model = 0
-
-
 @unique
 class GpuInfoType(Enum):
     GpuGetCounts = 0
@@ -40,12 +34,6 @@ api = Api(app)
 CORS(app)
 # parser = reqparse.RequestParser()
 
-
-# TODOS 目前没有用到
-TODOS = {
-    'train_model': {'func_name': TodosType.train_model.name},
-}
-
 QUERYS = {
     'gpu_counts': GpuInfoType.GpuGetCounts.name,
     'gpu_name': GpuInfoType.GpuGetDeviceName.name,
@@ -66,23 +54,9 @@ QUERYS = {
 
 
 def abort_if_todo_doesnt_exist(id):
-    if id not in TODOS and id not in QUERYS:
-        # dict1 = {"TODOS":TODOS}
-        # dict2 = {"QUERYS":QUERYS}
-        # msg = dict(dict1, **dict2)
+    if id not in QUERYS:
         msg = "error api call"
         abort(404, message=msg)
-
-
-def todo_exe_fun(todo_id, args):
-    func_name = TODOS[todo_id]['func_name']
-    if func_name == TodosType.train_model.name:
-        exe_fun = getattr(remote_service, func_name)
-        th = threading.Thread(target=exe_fun, args=(
-            args['file_path'], args['task_name'], args['dataset_name'],))  # 消耗时间，起线程运行
-        th.start()
-    else:
-        print("error func")
 
 # 根据函数名字调用函数
 
@@ -105,31 +79,7 @@ def gpuinfo_exe_fun(query_id, args):
         else:
             return res
 
-# Todo
-# shows a single todo item and lets you delete a todo item
-
-
-class Todo(Resource):
-    def __init__(self):
-        self.parser = reqparse.RequestParser()
-        self.parser.add_argument('task_name')
-        self.parser.add_argument('dataset_name')
-        self.parser.add_argument('file_path')
-
-    def get(self, todo_id):
-        abort_if_todo_doesnt_exist(todo_id)
-        return TODOS[todo_id]
-
-    def post(self, todo_id):
-        abort_if_todo_doesnt_exist(todo_id)
-        args = self.parser.parse_args()
-        todo_exe_fun(todo_id, args)
-        # train(args['file_path'], args['task_name'], args['dataset_name'])
-        return TODOS[todo_id], 200
-
 # GPU Query
-
-
 class GPUQuery(Resource):
     def __init__(self):
         self.parser = reqparse.RequestParser()
@@ -160,7 +110,6 @@ def remote_service_start(username, password, protocol='http://', server_ip='http
     except Exception as err:
         print(err)
 
-api.add_resource(Todo, '/todos/<todo_id>')
 api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
 
 if __name__ == '__main__':
