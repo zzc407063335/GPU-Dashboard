@@ -2,10 +2,9 @@
 import requests
 import time
 from threading import Thread
-import os
+import os, sys, traceback, random
 import subprocess
 import json
-import sys
 import psutil
 import asyncio
 from pynvml import *
@@ -14,6 +13,8 @@ import conn_profile as cf
 from firstquadrants import TaskClient
 import local_service as ls
 
+sys.path.append('logs')
+from logfile import errorLogger,infoLogger,debugLogger
 
 def decompress_datafile(data_dir, file_name):
     # 文件名错误怎么办？
@@ -40,12 +41,11 @@ def decompress_datafile(data_dir, file_name):
         else:
             pass
     except IndexError:
-        print('error file name')
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     except IOError:
-        print('error file path')
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     else:
         return suffix_name
-
 
 def compress_model_result(data_dir, method):
     try:
@@ -73,11 +73,10 @@ def compress_model_result(data_dir, method):
             z.close()
         else:
             pass
-    except Exception as err:
-        print(err)
+    except Exception:
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     else:
         return modelfile_name
-
 
 def run_script(data_dir, script_name, gpu_index):
     # 目前支持python训练文件
@@ -104,30 +103,45 @@ def run_script(data_dir, script_name, gpu_index):
             proc_counts += ls.GpuGetDeviceProcessCounts(index)['proc_counts']
 
     try:
-        print("start train")
+        debugLogger.debug("start train")
         # 创建
-        stdout = open(log_file, 'w+')
-        stderr = open(err_file, 'w+')
+        stdout = open(log_file, 'a+')
+        stderr = open(err_file, 'a+')
         subporc = subprocess.Popen(args=cmd, shell=True, stdout=stdout.fileno(
-        ), stderr=stderr.fileno(), cwd=data_dir)
+        ), stderr=stderr.fileno(),preexec_fn=os.setsid, cwd=data_dir)
+        infoLogger.info('Start train. Subprocess ID:{pid}'.format(pid=subporc.pid))
         subporc.communicate()
+    except BaseException:
+        # 执行过程中出现了错误,例如ctl+c
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+        os.killpg(subporc.pid,9)
+        subporc.kill()
+        subporc.communicate()
+    else:
         res = subporc.returncode
+        debugLogger.debug(res)
         if res == 0:
-            print("success")
+            debugLogger.debug("success")
+            infoLogger.info('Finish task. Subprocess ID:{pid}'.format(pid=subporc.pid))
         else:
-            print("error when running script")
+            debugLogger.debug("error when running script")
+            # 就要删掉对应的子进程
+            # -9 和 137
+            try:
+                infoLogger.info('Error when run the script. Subprocess ID:{pid}. Returncode:{returncode}. Kill the subprocess.'
+                                .format(pid=subporc.pid,returncode=res))
+                os.killpg(subporc.pid,9)
+            except BaseException:
+                errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                infoLogger.error('\n'+str(traceback.format_exc())+'\n')
         stdout.flush()
         stderr.flush()
         stdout.close()
         stderr.close()
-    except Exception as e:
-        print("error:", e)
-    else:
+    finally:
         return res
 
 # state是任务状态，查看当前训练是否需要下载
-
-
 def train_model(client, task, data_dir):
     try:
         # 训练过程出错，不需要再重新下载数据集
@@ -145,16 +159,19 @@ def train_model(client, task, data_dir):
             res = run_script(data_dir, script_name, 1)
             # 没有正常结束，是否用上报？
             if res != 0:
-                time.sleep(60)
+                sleep_time = random.randint(60,180)
+                infoLogger.info('Task {id} return no-zero code. Sleep {time}s and re-run the script.'.format(id=task['id'],time=sleep_time))
+                time.sleep(sleep_time)
 
         modelfile_name = compress_model_result(data_dir, compress_method)
         logfile_name = cf.LOG_INFO_NAME
+        infoLogger.info('Post result to server')
         client.post_task_result(task['id'], task['gpu_id'], printed_str='',
                                 model_file_path=os.path.join(
                                     data_dir, modelfile_name),
                                 log_file_path=os.path.join(data_dir, cf.LOCAL_RESULT_DIR, logfile_name))
-    except Exception as err:
-        print(err)
+    except Exception:
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     else:
         return data_dir
 
@@ -162,9 +179,8 @@ def train_model(client, task, data_dir):
 async def request_for_tasks(client, q_tasks):
     try:
         servers = client.get_server_list()
-    except Exception as err:
-        print(err)
-
+    except Exception:
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     '''
     首先请求未完成任务列表
     '''
@@ -188,11 +204,12 @@ async def request_for_tasks(client, q_tasks):
         #  "state": "running"}
     ]
 
-    f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'r')
+    f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'w+')
     for line in f:
         task = json.loads(line)
         for unfin_task in unfin_tasks:
             if task['id'] == unfin_task['id']:
+                infoLogger.info('Continue unfinished task {id}'.format(id=unfin_task['id']))
                 await q_tasks.put(unfin_task)
     f.close()
 
@@ -200,8 +217,8 @@ async def request_for_tasks(client, q_tasks):
         await asyncio.sleep(5)
         try:
             tasks = client.request_tasks()
-        except Exception as err:
-            print(err)
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             continue
         else:
             if tasks == None:
@@ -222,25 +239,25 @@ async def request_for_tasks(client, q_tasks):
             f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'a+')
             f.write(json.dumps(cur_task)+'\n')
             f.close()
+            infoLogger.info('Put task {task_id} in queue. Use GPU {gpu_id}'.format(task_id=cur_task['id'],gpu_id=cur_task['gpu_id']))
             # print(cur_task)
             await q_tasks.put(cur_task)
 
 
 async def process_tasks(client, q_tasks):
-
     while True:
         _task = await q_tasks.get()
         lp = asyncio.get_event_loop()
         try:
-            # res 暂时没用
+            infoLogger.info('Process task {task_id}. Use GPU {gpu_id}'.format(task_id=_task['id'],gpu_id=_task['gpu_id']))
             res = await lp.run_in_executor(None, train_model, client, _task, _task['dir'],)
-        except Exception as err:
-            print(err)
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             break
 
 
 def connect_to_remote_server(username, password, protocol='http://', server_ip='127.0.0.1', port=8000):
-    print("start remote service")
+    infoLogger.info('service start')
     domain = ':'.join([protocol + server_ip, str(port)])
 
     client = TaskClient(username=username, password=password,
@@ -264,12 +281,13 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
         register_gpu_index.append(i)
         gpu_mem = float(ls.GpuGetDeviceMemory(i)['mem_total'])
         try:
-            flag = client.register_server(memory_size=pc_mem, hdisk_size=hd_size,
+            client.register_server(memory_size=pc_mem, hdisk_size=hd_size,
                                           support_gpu=gpu_support, gpu_memory_size=gpu_mem)
-        except Exception as err:
-            print(err)
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         else:
-            print(flag)
+            infoLogger.info('Register GPU {index} to server.'.format(index=i))
+            debugLogger.debug('true')
 
     main_loop = asyncio.get_event_loop()
     q_tasks = asyncio.Queue(
@@ -288,9 +306,11 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
         try:
             main_loop.run_until_complete(asyncio.gather(*coroutines))
         except Exception as err:
-            print(err)
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            debugLogger.debug('\n'+str(traceback.format_exc())+'\n')
         finally:
-            print("close")
+            infoLogger.info('Stop service.')
+
             # main_loop.close()
 
 

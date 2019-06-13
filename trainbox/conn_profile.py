@@ -19,3 +19,4 @@ LOG_INFO_NAME = 'info.log'
 LOG_ERROR_NAME = 'error.log'
 
 REGISTER_GPU_COUNT = 0
+
