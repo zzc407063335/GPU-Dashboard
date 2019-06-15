@@ -89,8 +89,12 @@ def run_script(data_dir, script_name, gpu_index):
     if not os.path.exists(os.path.join(data_dir, cf.LOCAL_RESULT_DIR)):
         os.makedirs(os.path.join(data_dir, cf.LOCAL_RESULT_DIR))
 
-    log_file = os.path.join(data_dir, cf.LOCAL_RESULT_DIR, cf.LOG_INFO_NAME)
-    err_file = os.path.join(data_dir, cf.LOCAL_RESULT_DIR, cf.LOG_ERROR_NAME)
+    log_file = os.path.join(data_dir, 
+                            cf.LOCAL_RESULT_DIR, 
+                            cf.LOG_INFO_NAME)
+    err_file = os.path.join(data_dir, 
+                            cf.LOCAL_RESULT_DIR, 
+                            cf.LOG_ERROR_NAME)
 
     proc_counts = 0
     for index in range(cf.REGISTER_GPU_COUNT):
@@ -105,11 +109,12 @@ def run_script(data_dir, script_name, gpu_index):
     try:
         debugLogger.debug("start train")
         # 创建
-        stdout = open(log_file, 'a+')
-        stderr = open(err_file, 'a+')
+        stdout = open(log_file, 'w+')
+        stderr = open(err_file, 'w+')
         subporc = subprocess.Popen(args=cmd, shell=True, stdout=stdout.fileno(
         ), stderr=stderr.fileno(),preexec_fn=os.setsid, cwd=data_dir)
-        infoLogger.info('Start train. Subprocess ID:{pid}'.format(pid=subporc.pid))
+        infoLogger.info('Start train. Subprocess ID:{pid}'
+                        .format(pid=subporc.pid))
         subporc.communicate()
     except BaseException:
         # 执行过程中出现了错误,例如ctl+c
@@ -122,13 +127,17 @@ def run_script(data_dir, script_name, gpu_index):
         debugLogger.debug(res)
         if res == 0:
             debugLogger.debug("success")
-            infoLogger.info('Finish task. Subprocess ID:{pid}'.format(pid=subporc.pid))
+            infoLogger.info('Finish task. Subprocess ID:{pid}'.format(
+                                pid=subporc.pid))
         else:
             debugLogger.debug("error when running script")
             # 就要删掉对应的子进程
             # -9 和 137
             try:
-                infoLogger.info('Error when run the script. Subprocess ID:{pid}. Returncode:{returncode}. Kill the subprocess.'
+                infoLogger.info('Error when run the script. \
+                                Subprocess ID:{pid}. \
+                                Returncode:{returncode}. \
+                                Kill the subprocess.'
                                 .format(pid=subporc.pid,returncode=res))
                 os.killpg(subporc.pid,9)
             except BaseException:
@@ -145,8 +154,13 @@ def run_script(data_dir, script_name, gpu_index):
 def train_model(client, task, data_dir):
     try:
         # 训练过程出错，不需要再重新下载数据集
-        if(task['state'] != 'running'):
-            client.get_task_data(task, data_dir=data_dir)
+        # 正在运行状态,注意gpu_id 对应于服务器端的user_server_no
+        if(task['status'] != 'RN'):
+            client.confirm_request(task['id'],task['gpu_id'])
+            client.get_task_data(task=task, 
+                                data_dir=data_dir, 
+                                user_server_no=task['gpu_id'])
+            
         script_name = task['script_file'].split('/')[-1]  # 默认python文件
         datafile_name = task['data_file'].split('/')[-1]  # 目前默认tar.gz
         compress_method = decompress_datafile(data_dir, datafile_name)
@@ -154,22 +168,26 @@ def train_model(client, task, data_dir):
         fix this place
         '''
         # run_script(data_dir, script_name, task['gpu_id'])
-        res = 255
+        res = -1
         while res != 0:
-            res = run_script(data_dir, script_name, 1)
+            client.start_running_task(task['id'],task['gpu_id'])
+            res = run_script(data_dir, script_name, task['gpu_id'])
             # 没有正常结束，是否用上报？
             if res != 0:
                 sleep_time = random.randint(60,180)
-                infoLogger.info('Task {id} return no-zero code. Sleep {time}s and re-run the script.'.format(id=task['id'],time=sleep_time))
+                infoLogger.info('Task {id} return no-zero code. \
+                                Sleep {time}s and re-run the script.'
+                                .format(id=task['id'],time=sleep_time))
                 time.sleep(sleep_time)
 
-        modelfile_name = compress_model_result(data_dir, compress_method)
+        uploadfile_name = compress_model_result(data_dir, compress_method)
         logfile_name = cf.LOG_INFO_NAME
         infoLogger.info('Post result to server')
-        client.post_task_result(task['id'], task['gpu_id'], printed_str='',
-                                model_file_path=os.path.join(
-                                    data_dir, modelfile_name),
-                                log_file_path=os.path.join(data_dir, cf.LOCAL_RESULT_DIR, logfile_name))
+        client.post_task_result(task['id'], task['gpu_id'], 
+                                output_string='task finished',
+                                output_file=os.path.join(
+                                    data_dir, uploadfile_name)
+                                )
     except Exception:
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     else:
@@ -178,45 +196,60 @@ def train_model(client, task, data_dir):
 
 async def request_for_tasks(client, q_tasks):
     try:
-        servers = client.get_server_list()
+        devices = client.get_server_list()
+        devices_cnt = len(devices)
     except Exception:
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     '''
     首先请求未完成任务列表
     '''
-    unfin_tasks = [
-        # {"id": 24, "name": "keras",
-        #  "task_desc": "123",
-        #  "script_file": "/media/2019/6/0xb40x4c0x5c0x160xe80x530xb0x370x680xab/cifar10_cnn_keras_docker_test.py",
-        #  "data_file": "/media/2019/6/0xd40xe80xfb0xfc0x3b0x1d0x680x500xa00xda/cifar-10-batches-py.tar.gz",
-        #  "add_time": "2019-06-10T13:19:10.953Z",
-        #  "gpu_id": 349,
-        #  "dir": "/data/0x2f0xf30x7f0xc10xe80x570x130xad0x7d0x3",
-        #  "state": "running"},
-        # {"id": 25,
-        #  "name": "pytorch",
-        #  "task_desc": "123",
-        #  "script_file": "/media/2019/6/0xc40x700xd50x470xcc0x250x900xab0x9c0x44/gpu_test.py",
-        #  "data_file": "/media/2019/6/0x150xf60x450x810x90xfa0xd10x690x260xd3/ywb_MNIST.tar.gz",
-        #  "add_time": "2019-06-10T13:19:07.256Z",
-        #  "gpu_id": 349,
-        #  "dir": "/data/0x9f0x200x6a0xf80xf0x2b0x2d0xcb0xe00xb8",
-        #  "state": "running"}
-    ]
+    all_unfin_tasks = []
+    try:
+        for device in devices:
+            unfin_tasks = client.request_running_tasks(
+                device['user_server_no'])
+            for unfin_task in unfin_tasks:
+                    exist = False
+                    for task in all_unfin_tasks:
+                        if task['id'] == unfin_task['id']:
+                            exist = True
+                            break
+                    if not exist:
+                        all_unfin_tasks.append(unfin_task)
+    except Exception:
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+    
+    pprint(all_unfin_tasks)
 
-    f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'w+')
+    if not os.path.exists(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt')):
+        os.mknod(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt'))
+    
+    f = open(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt'),'r')
     for line in f:
         task = json.loads(line)
-        for unfin_task in unfin_tasks:
+        for unfin_task in all_unfin_tasks:
             if task['id'] == unfin_task['id']:
-                infoLogger.info('Continue unfinished task {id}'.format(id=unfin_task['id']))
-                await q_tasks.put(unfin_task)
+                infoLogger.info('Continue unfinished task {id}'.format(
+                                                id=unfin_task['id']))
+                task['status'] = 'RN'
+                await q_tasks.put(task)
     f.close()
-
+    
     while True:
         await asyncio.sleep(5)
+        tasks = []
         try:
-            tasks = client.request_tasks()
+            # 目前这块儿还没定下来
+            for device in devices:
+                cur_tasks = client.request_tasks(device['user_server_no'])
+                for cur_task in cur_tasks:
+                    exist = False
+                    for task in tasks:
+                        if task['id'] == cur_task['id']:
+                            exist = True
+                            break
+                    if not exist:
+                        tasks.append(cur_task)
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             continue
@@ -226,43 +259,56 @@ async def request_for_tasks(client, q_tasks):
             elif len(tasks) == 0:
                 continue
 
-        for i in range(0, len(tasks)):
-            cur_task = tasks[i]  # 取出任务
+        pprint(tasks)
+        index_clt = 0
+        for cur_task in tasks:
+            index_clt = (index_clt + 1) % devices_cnt
             _dir = ''.join([hex(i) for i in os.urandom(10)])
-            local_dir = cf.LOCAL_ROOT_DIR  # 封装注意修改LOCAL_ROOT_DIR
+            local_dir = cf.LOCAL_DATA_DIR  
+            # 封装注意修改LOCAL_DATA_DIR
             # 后面的data_dir 都是这个目录，即用户文件目录
             _dir = os.path.join(local_dir, _dir)
-            cur_task['gpu_id'] = servers[0]['id']
+            cur_task['gpu_id'] = index_clt
             cur_task['dir'] = _dir
-            cur_task['state'] = 'down'
             # print(type(cur_task))
             f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'a+')
             f.write(json.dumps(cur_task)+'\n')
             f.close()
-            infoLogger.info('Put task {task_id} in queue. Use GPU {gpu_id}'.format(task_id=cur_task['id'],gpu_id=cur_task['gpu_id']))
+            infoLogger.info('Put task {task_id} in queue. Use GPU \
+                                {gpu_id}'.format(task_id=cur_task['id'],
+                                gpu_id=cur_task['gpu_id']))
             # print(cur_task)
             await q_tasks.put(cur_task)
-
 
 async def process_tasks(client, q_tasks):
     while True:
         _task = await q_tasks.get()
+        pprint(_task)
         lp = asyncio.get_event_loop()
         try:
-            infoLogger.info('Process task {task_id}. Use GPU {gpu_id}'.format(task_id=_task['id'],gpu_id=_task['gpu_id']))
-            res = await lp.run_in_executor(None, train_model, client, _task, _task['dir'],)
+            infoLogger.info('Process task {task_id}. Use GPU {gpu_id}'
+                    .format(task_id=_task['id'],gpu_id=_task['gpu_id']))
+            res = await lp.run_in_executor(None, train_model, 
+                                            client, _task, _task['dir'],)
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             break
 
-
-def connect_to_remote_server(username, password, protocol='http://', server_ip='127.0.0.1', port=8000):
-    infoLogger.info('service start')
-    domain = ':'.join([protocol + server_ip, str(port)])
-
-    client = TaskClient(username=username, password=password,
+def check_user(username, password, protocol='http://', 
+                            server_ip='127.0.0.1', port=8000):
+    domain = protocol + server_ip
+    client = TaskClient(username=username, 
+                        password=password,
                         domain=domain)
+    client._login()
+    if client.am_i_login():
+        return client
+    else:
+        errorLogger.error('Wrong username and/or password.')
+        return False
 
+def connect_to_remote_server(client):
+    infoLogger.info('service start')
     gpu_count = ls.GpuGetCounts()['counts']  # 获取设备数量
 
     div_gb_factor = (1024.0 ** 3)
@@ -276,18 +322,37 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
 
     cf.REGISTER_GPU_COUNT = gpu_count
 
+    devices = client.get_server_list()
     # 目前把设备都注册到服务器上
     for i in range(0, gpu_count):
+        ctl = False
+        for device in devices:
+            # 已经注册过本机的某块GPU
+            if device['user_server_no'] == i:
+                debugLogger.debug('exists')
+                ctl = True
+                break
+        if ctl:
+            continue
         register_gpu_index.append(i)
         gpu_mem = float(ls.GpuGetDeviceMemory(i)['mem_total'])
+        gpu_name = ls.GpuGetDeviceName(i)['device_name']
+        gpu_brand = ls.GpuGetDeviceBrand(i)['brand_name']
         try:
-            client.register_server(memory_size=pc_mem, hdisk_size=hd_size,
-                                          support_gpu=gpu_support, gpu_memory_size=gpu_mem)
+            flag = client.register_server(memory_size=pc_mem, 
+                                   hdisk_size=hd_size,
+                                   device_name=gpu_name,
+                                   device_series=gpu_brand,
+                                   user_server_no=i,
+                                   support_gpu=gpu_support, 
+                                   gpu_memory_size=gpu_mem)
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         else:
-            infoLogger.info('Register GPU {index} to server.'.format(index=i))
-            debugLogger.debug('true')
+            infoLogger.info('Register GPU {index} to server.'
+                            .format(index=i))
+            if flag != None:
+                debugLogger.debug('true')
 
     main_loop = asyncio.get_event_loop()
     q_tasks = asyncio.Queue(
@@ -308,12 +373,11 @@ def connect_to_remote_server(username, password, protocol='http://', server_ip='
         except Exception as err:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             debugLogger.debug('\n'+str(traceback.format_exc())+'\n')
-        finally:
             infoLogger.info('Stop service.')
+            break
 
             # main_loop.close()
 
 
 if __name__ == '__main__':
     nvmlInit()
-    connect_to_remote_server('zzczzc', 'zzc997997')

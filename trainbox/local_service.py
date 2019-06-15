@@ -70,7 +70,8 @@ def GpuGetDevicePersistenceModel(gpu_index):
         return error_info
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
-        mode = 'Enabled' if (nvmlDeviceGetPersistenceMode(handle) != 0) else 'Disabled'
+        mode = 'Enabled' if (nvmlDeviceGetPersistenceMode(handle) != 0) \
+                else 'Disabled'
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
@@ -134,12 +135,15 @@ def GpuGetDeviceMemory(gpu_index):
         mem_info = nvmlDeviceGetMemoryInfo(handle)
         mem_total = str(mem_info.total / 1024 / 1024 / 1024)
         mem_used = str(mem_info.used / 1024 / 1024 / 1024)
-        mem_free = str(mem_info.total / 1024 / 1024 /1024 - mem_info.used / 1024 / 1024 /1024)
+        mem_free = str(mem_info.total / 1024 / 1024 /1024 - \
+                    mem_info.used / 1024 / 1024 /1024)
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
     else:
-        info = {'mem_total':mem_total,'mem_used':mem_used,'mem_free':mem_free}
+        info = {'mem_total':mem_total,
+                'mem_used':mem_used,
+                'mem_free':mem_free}
         info = info
         return info
 
@@ -153,12 +157,15 @@ def GpuGetDeviceBar1Memory(gpu_index):
         memInfo = nvmlDeviceGetBAR1MemoryInfo(handle)
         mem_total = str(memInfo.bar1Total / 1024 / 1024)
         mem_used = str(memInfo.bar1Used / 1024 / 1024)
-        mem_free = str(memInfo.bar1Total / 1024 / 1024 - memInfo.bar1Used / 1024 / 1024)
+        mem_free = str(memInfo.bar1Total / 1024 / 1024 - \
+                        memInfo.bar1Used / 1024 / 1024)
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
     else:
-        info = {'mem_total': mem_total, 'mem_used': mem_used, 'mem_free': mem_free}
+        info = {'mem_total': mem_total, 
+                'mem_used': mem_used,  
+                'mem_free': mem_free}
         info = info
         return info
 
@@ -170,13 +177,17 @@ def GpuGetDeviceTemperature(gpu_index):
     try:
         handle = nvmlDeviceGetHandleByIndex(gpu_index)
         temp = str(nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU))
-        temp_shutdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SHUTDOWN))
-        temp_slowdown =  str(nvmlDeviceGetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_SLOWDOWN))
+        temp_shutdown =  str(nvmlDeviceGetTemperatureThreshold(handle, 
+                                NVML_TEMPERATURE_THRESHOLD_SHUTDOWN))
+        temp_slowdown =  str(nvmlDeviceGetTemperatureThreshold(handle, 
+                                NVML_TEMPERATURE_THRESHOLD_SLOWDOWN))
     except NVMLError as err:
         error_info = handleError(err)
         return error_info
     else:
-        info = {"cur_temp":temp,"temp_shutdown":temp_shutdown,"temp_slowdown":temp_slowdown}
+        info = {"cur_temp":temp,
+                "temp_shutdown":temp_shutdown,
+                "temp_slowdown":temp_slowdown}
         return info
 
 # 获取设备利用率
@@ -197,7 +208,11 @@ def GpuGetDeviceUtilization(gpu_index):
         error_info = handleError(err)
         return error_info
     else:
-        info = {'gpu_util': gpu_util, 'mem_util': mem_util, 'encoder_util': encoder_util, 'decoder_util':decoder_util}
+        info = {'gpu_util': gpu_util, 
+                'mem_util': mem_util, 
+                'encoder_util': encoder_util, 
+                'decoder_util':decoder_util
+                }
         return info
 
 # 获取设备使用功率
@@ -226,14 +241,17 @@ def GpuGetDevicePowerInfo(gpu_index):
         powMan = nvmlDeviceGetPowerManagementMode(handle)
         powManStr = 'Supported' if powMan != 0 else 'N/A'
 
-        powLimit = (nvmlDeviceGetPowerManagementLimit(handle) / 1000.0) # 设定的功率上限
+        powLimit = (nvmlDeviceGetPowerManagementLimit(handle) / 1000.0) 
+        # 设定的功率上限
         setting_powLimit = '%.2f W' % powLimit
         powLimit = (nvmlDeviceGetPowerManagementDefaultLimit(handle) / 1000.0)
         default_powLimit = '%.2f W' % powLimit
-        powLimit = nvmlDeviceGetPowerManagementLimitConstraints(handle) #强制的功率上下限
+        powLimit = nvmlDeviceGetPowerManagementLimitConstraints(handle) 
+        #强制的功率上下限
         powLimitStrMin = '%.2f W' % (powLimit[0] / 1000.0)
         powLimitStrMax = '%.2f W' % (powLimit[1] / 1000.0)
-        powLimit = (nvmlDeviceGetEnforcedPowerLimit(handle) / 1000.0) # 强制的功率限制，与设定的功率上限类似？
+        powLimit = (nvmlDeviceGetEnforcedPowerLimit(handle) / 1000.0) 
+        # 强制的功率限制，与设定的功率上限类似？
         enforcedPowLimitStr = '%.2f W' % powLimit
     except NVMLError as err:
         error_info = handleError(err)

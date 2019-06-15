@@ -103,19 +103,22 @@ def local_service_start(PORT):
     except Exception as err:
         print(err)
 
-def remote_service_start(username, password, protocol='http://', server_ip='http://127.0.0.1', port=8000):
+def remote_service_start(client):
     nvmlInit()
     try:
-        remote_service.connect_to_remote_server(username, password, protocol , server_ip, port)
+        remote_service.connect_to_remote_server(client)
     except Exception as err:
         print(err)
 
 api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
 
 if __name__ == '__main__':
-
+    client = remote_service.check_user(USER_NAME,USER_PASS, 
+                                PROTOCOL, SERVER_IP, SERVER_PORT)
+    if client == False:
+        os._exit(-1)
     pool=Pool(2)
     pool.apply_async(local_service_start, (LOCAL_PORT, ))
-    pool.apply_async(remote_service_start,(USER_NAME,USER_PASS, PROTOCOL, SERVER_IP, SERVER_PORT,))
+    pool.apply_async(remote_service_start,(client,))
     pool.close()
     pool.join()
