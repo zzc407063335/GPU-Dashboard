@@ -3,7 +3,7 @@ import requests
 import time
 from threading import Thread
 import os, sys, traceback, random
-import subprocess
+import subprocess, threading
 import json
 import psutil
 import asyncio
@@ -79,11 +79,19 @@ def compress_model_result(data_dir, method):
     else:
         return modelfile_name
 
+def kill_time_out_task(subproc):
+    try:
+        os.killpg(subproc.pid, 9)
+    except Exception as err:
+        debugLogger.debug(err)
+        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+
 def run_script(data_dir, script_name, gpu_index, task_id):
     # 目前支持python训练文件
     # tf keras pytorch 应该分开？
 
-    cmd = 'CUDA_VISIBLE_DEVICES={index} python {script}'.format(
+    # PYTHONUNBUFFERED=1 默认不使用缓存，实时获取STDOUT输出 
+    cmd = 'CUDA_VISIBLE_DEVICES={index} PYTHONUNBUFFERED=1 python {script}'.format(
         index=gpu_index, script=script_name)
 
     # 创建result 文件夹
@@ -112,19 +120,30 @@ def run_script(data_dir, script_name, gpu_index, task_id):
         # 创建
         stdout = open(log_file, 'w+')
         stderr = open(err_file, 'w+')
-        subporc = subprocess.Popen(args=cmd, shell=True, stdout=stdout.fileno(
-        ), stderr=stderr.fileno(),preexec_fn=os.setsid, cwd=data_dir)
+        subporc = subprocess.Popen(args=cmd, shell=True, stdout=subprocess.PIPE,
+                    stderr=stderr.fileno(), preexec_fn=os.setsid, cwd=data_dir)
         infoLogger.info('Start train. Subprocess ID:{pid}'
                         .format(pid=subporc.pid))
-        subporc.communicate()
+        time_out = cf.TIME_OUT
+        task_timer = threading.Timer(time_out, kill_time_out_task, [subporc])
+        task_timer.start()     
+        line = []
+        while len(line) > 1 or subporc.poll() == None:
+            line = subporc.stdout.readline().decode('utf-8').split('\n')
+            stdout.write(line[0] + '\n')
+            print(line[0])
+            # client.post_line() 实时输出反馈给服务器
+        res = subporc.returncode
+        # subporc.communicate()
     except BaseException:
+        task_timer.cancel()
         # 执行过程中出现了错误,例如ctl+c
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         os.killpg(subporc.pid,9)
         subporc.kill()
         subporc.communicate()
     else:
-        res = subporc.returncode
+        task_timer.cancel()
         debugLogger.debug(res)
         if res == 0:
             debugLogger.debug("success")
@@ -133,7 +152,7 @@ def run_script(data_dir, script_name, gpu_index, task_id):
         else:
             debugLogger.debug("error when running script")
             # 就要删掉对应的子进程,
-            # 这里可能子进程subprocess已经结束了，例如错误的代码内容等，因此killpg时可能会抛出异常，不过不影响
+            # 这里可能子进程subprocess已经结束了，例如错误的代码内容等，因此killpg时可能会抛出异常，不过不影响服务
             # -9 和 137
             try:
                 infoLogger.info('Error when run the script.\
