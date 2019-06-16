@@ -39,6 +39,7 @@ def decompress_datafile(data_dir, file_name):
             zip_ref.close()
         # 其他解压缩方法
         else:
+            print('undefined decompress method')
             pass
     except IndexError:
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
@@ -78,7 +79,7 @@ def compress_model_result(data_dir, method):
     else:
         return modelfile_name
 
-def run_script(data_dir, script_name, gpu_index):
+def run_script(data_dir, script_name, gpu_index, task_id):
     # 目前支持python训练文件
     # tf keras pytorch 应该分开？
 
@@ -131,18 +132,19 @@ def run_script(data_dir, script_name, gpu_index):
                                 pid=subporc.pid))
         else:
             debugLogger.debug("error when running script")
-            # 就要删掉对应的子进程
+            # 就要删掉对应的子进程,
+            # 这里可能子进程subprocess已经结束了，例如错误的代码内容等，因此killpg时可能会抛出异常，不过不影响
             # -9 和 137
             try:
-                infoLogger.info('Error when run the script. \
-                                Subprocess ID:{pid}. \
-                                Returncode:{returncode}. \
+                infoLogger.info('Error when run the script.\
+                                Task ID: {task_id}.\
+                                Subprocess ID:{pid}.\
+                                Returncode:{returncode}.\
                                 Kill the subprocess.'
-                                .format(pid=subporc.pid,returncode=res))
+                            .format(task_id=task_id,pid=subporc.pid,returncode=res))
                 os.killpg(subporc.pid,9)
             except BaseException:
                 errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-                infoLogger.error('\n'+str(traceback.format_exc())+'\n')
         stdout.flush()
         stderr.flush()
         stdout.close()
@@ -154,6 +156,7 @@ def run_script(data_dir, script_name, gpu_index):
 def train_model(client, task, data_dir):
     try:
         # 训练过程出错，不需要再重新下载数据集
+        # 注意:目前没有增加数据集下载过程出错的差错控制
         # 正在运行状态,注意gpu_id 对应于服务器端的user_server_no
         if(task['status'] != 'RN'):
             client.confirm_request(task['id'],task['gpu_id'])
@@ -169,22 +172,32 @@ def train_model(client, task, data_dir):
         '''
         # run_script(data_dir, script_name, task['gpu_id'])
         res = -1
+        try_time = 0
+        script_res = False
         while res != 0:
+            try_time += 1
             client.start_running_task(task['id'],task['gpu_id'])
-            res = run_script(data_dir, script_name, task['gpu_id'])
-            # 没有正常结束，是否用上报？
+            res = run_script(data_dir, script_name, task['gpu_id'],task['id'])
+            # 没有正常结束,retry
+            if res == 0:
+                script_res = True
+            if try_time >= 10:
+                infoLogger.info('Retry {times} times. Post latest retry log.'
+                                .format(times=try_time))
+                break
             if res != 0:
                 sleep_time = random.randint(60,180)
-                infoLogger.info('Task {id} return no-zero code. \
+                infoLogger.info('Task {id} return no-zero code.\
                                 Sleep {time}s and re-run the script.'
                                 .format(id=task['id'],time=sleep_time))
                 time.sleep(sleep_time)
-
+                
         uploadfile_name = compress_model_result(data_dir, compress_method)
-        logfile_name = cf.LOG_INFO_NAME
-        infoLogger.info('Post result to server')
+        infoLogger.info('Post result to server. Task {task_id}'
+                        .format(task_id=task['id']))
         client.post_task_result(task['id'], task['gpu_id'], 
                                 output_string='task finished',
+                                valid_or_not=script_res,
                                 output_file=os.path.join(
                                     data_dir, uploadfile_name)
                                 )
@@ -219,12 +232,11 @@ async def request_for_tasks(client, q_tasks):
     except Exception:
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     
-    pprint(all_unfin_tasks)
-
     if not os.path.exists(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt')):
         os.mknod(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt'))
     
     f = open(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.txt'),'r')
+    # 注意此处，如果下载数据集的过程中出错了，那么这里会出现bug
     for line in f:
         task = json.loads(line)
         for unfin_task in all_unfin_tasks:
@@ -283,7 +295,6 @@ async def request_for_tasks(client, q_tasks):
 async def process_tasks(client, q_tasks):
     while True:
         _task = await q_tasks.get()
-        pprint(_task)
         lp = asyncio.get_event_loop()
         try:
             infoLogger.info('Process task {task_id}. Use GPU {gpu_id}'
