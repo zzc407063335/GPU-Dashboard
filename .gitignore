@@ -22,6 +22,5 @@ firstquadrant/
 keras/
 trainbox/logs/__pycache__
 .DS_Store
-./*.py/
 *.h5
 

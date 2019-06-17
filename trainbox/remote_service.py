@@ -72,8 +72,17 @@ def compress_model_result(data_dir, method):
                 for filename in filenames:
                     z.write(os.path.join(dirpath, filename))
             z.close()
+        # 默认zip
         else:
-            pass
+            modelfile_name = 'result.zip'
+            import zipfile
+            z = zipfile.ZipFile(os.path.join(
+                data_dir, modelfile_name), 'w', zipfile.ZIP_DEFLATED)
+            startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
+            for dirpath, _, filenames in os.walk(startdir):
+                for filename in filenames:
+                    z.write(os.path.join(dirpath, filename))
+            z.close()
     except Exception:
         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
     else:
