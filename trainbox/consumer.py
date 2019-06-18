@@ -65,10 +65,12 @@ class TaskConsumer(object):
                 import tarfile
                 tar = tarfile.open(os.path.join(data_dir, modelfile_name), "w:gz")
                 startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-                for root, _, files in os.walk(startdir):
-                    for file in files:
-                        pathfile = os.path.join(root, file)
-                        tar.add(pathfile)
+                for dirpath, _, filenames in os.walk(startdir):
+                    for filename in filenames:
+                        path_file = os.path.join(dirpath, filename)
+                        # 去除/data/0x.......的前缀
+                        arcname = path_file[len(data_dir):].strip(os.path.sep)
+                        tar.add(path_file, arcname)
                 tar.close()
 
             elif method == 'zip':
@@ -79,7 +81,10 @@ class TaskConsumer(object):
                 startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
                 for dirpath, _, filenames in os.walk(startdir):
                     for filename in filenames:
-                        z.write(os.path.join(dirpath, filename))
+                        path_file = os.path.join(dirpath, filename)
+                        # 去除/data/0x.......的前缀
+                        arcname = path_file[len(data_dir):].strip(os.path.sep)
+                        z.write(path_file, arcname)
                 z.close()
             # 默认zip
             else:
@@ -90,7 +95,9 @@ class TaskConsumer(object):
                 startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
                 for dirpath, _, filenames in os.walk(startdir):
                     for filename in filenames:
-                        z.write(os.path.join(dirpath, filename))
+                        path_file = os.path.join(dirpath, filename)
+                        arcname = path_file[len(data_dir):].strip(os.path.sep)
+                        z.write(path_file, arcname)
                 z.close()
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
@@ -167,6 +174,7 @@ class TaskConsumer(object):
                 print(line)
                 time.sleep(0.2)
                 # client.post_line() 实时输出反馈给服务器
+
             res = subproc.returncode
             # subproc.communicate()
         except BaseException:
