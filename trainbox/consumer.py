@@ -10,20 +10,51 @@ from pprint import pprint
 import conn_profile as cf
 from firstquadrants import TaskClient
 import local_service as ls
+from enum import Enum, unique
+
 
 sys.path.append('logs')
 from logfile import errorLogger,infoLogger,debugLogger
 
+
+@unique
+class TaskStatus(Enum):
+    TaskFinished = 0
+    ScriptError = 1
+    DataSetError = 2
+    TaskTimeOut = 3
+    TaskStopped = 4
+    UnKownError = 127
+
+StatusDesc = {
+    TaskStatus.TaskFinished.value: 'Task finished.',
+    TaskStatus.ScriptError.value: 'An error occurred while running the script.',
+    TaskStatus.DataSetError.value: 'There was an error in decompression.',
+    TaskStatus.TaskTimeOut.value: 'Task timeout.',
+    TaskStatus.TaskStopped.value: 'Task stops.',
+    TaskStatus.UnKownError.value: 'Unknown error while running the script.'
+}
+
 class TaskConsumer(object):
+
     client: TaskClient
     q_tasks: asyncio.Queue # 任务队列
     co_loop: asyncio.unix_events._UnixSelectorEventLoop
+
     def __init__(self,cs_id):
         self.consumer_id = cs_id
         self.task = None
         self.time_out = cf.TIME_OUT
         self.task_timer: threading.Timer
         self.task_subproc = None
+        self.task_status = TaskStatus.UnKownError
+        self.task_desc = StatusDesc[self.task_status.value]
+
+    def clear_latest_task(self):
+        self.task = None
+        self.task_subproc = None
+        self.task_status = TaskStatus.UnKownError
+        self.task_desc = StatusDesc[self.task_status.value]
 
     def decompress_datafile(self, data_dir, file_name):
         # 文件名错误怎么办？
@@ -48,8 +79,12 @@ class TaskConsumer(object):
                 zip_ref.close()
             # 其他解压缩方法
             else:
-                print('undefined decompress method')
-                pass
+                infoLogger.info('Task {id} receive wrong data files.'.format(
+                    id=self.task['id']))
+                self.task_status = TaskStatus.DataSetError
+                self.task_desc = StatusDesc[self.task_status.value]
+                suffix_name = 'error'
+                # undefined decompress method
         except IndexError:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         except IOError:
@@ -104,8 +139,22 @@ class TaskConsumer(object):
         else:
             return modelfile_name
 
+    def stop_task(self, subproc):
+        try:
+            self.task_status = TaskStatus.TaskStopped
+            self.task_desc = StatusDesc[self.task_status.value]
+            self.task_timer.cancel()
+            infoLogger.info('Task {id} stop.'.format(id=self.task['id']))
+            os.killpg(subproc.pid, 9)
+        except Exception as err:
+            debugLogger.debug(err)
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+
     def kill_time_out_task(self, subproc):
         try:
+            self.task_status = TaskStatus.TaskTimeOut
+            self.task_desc = StatusDesc[self.task_status.value]
+            infoLogger.info('Task {id} time out.'.format(id=self.task['id']))
             os.killpg(subproc.pid, 9)
         except Exception as err:
             debugLogger.debug(err)
@@ -158,10 +207,11 @@ class TaskConsumer(object):
             # 创建
             stdout = open(log_file, 'w+')
             stderr = open(err_file, 'w+')
-            subproc = subprocess.Popen(args=cmd, bufsize=0, shell=True, stdout=subprocess.PIPE,
-                        stderr=stderr.fileno(), preexec_fn=os.setsid, cwd=data_dir)
-            infoLogger.info('Start train. Subprocess ID:{pid}'
-                            .format(pid=subproc.pid))
+            subproc = subprocess.Popen(args=cmd, bufsize=0, shell=True, 
+                                        stdout=subprocess.PIPE, stderr=stderr.fileno(), 
+                                        preexec_fn=os.setsid, cwd=data_dir)
+            infoLogger.info('Task {id} start train. Subprocess ID:{pid}'
+                            .format(id=task_id, pid=subproc.pid))
             self.task_subproc = subproc
             self.set_task_timer(self.time_out, subproc)
             
@@ -171,31 +221,32 @@ class TaskConsumer(object):
                 line = subproc.stdout.read(512).decode('utf-8')
                 stdout.write(line)
                 stdout.flush()
-                print(line)
-                time.sleep(0.2)
-                # client.post_line() 实时输出反馈给服务器
+                # print(line)
+                # 反馈输出
+                resp = self.client.post_task_output_str(task_id=self.task['id'],
+                                            user_server_no=self.task['gpu_id'], 
+                                            output_string=line) 
+                # if not valid self.stop_task() break
 
             res = subproc.returncode
             # subproc.communicate()
         except BaseException:
-            self.task_timer.cancel()
-            # 执行过程中出现了错误,例如ctl+c
+            # 执行过程中出现了错误
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             os.killpg(subproc.pid,9)
             subproc.kill()
             subproc.communicate()
-
         else:
-            self.task_timer.cancel()
             debugLogger.debug(res)
             if res == 0:
                 debugLogger.debug("success")
-                infoLogger.info('Finish task. Subprocess ID:{pid}'.format(
-                                    pid=subproc.pid))
+                infoLogger.info('Finish task. Task {id}'.format(
+                                    id=self.task['id']))
             else:
                 debugLogger.debug("error when running script")
                 # 就要删掉对应的子进程,
-                # 这里可能子进程subprocess已经结束了，例如错误的代码内容等，因此killpg时可能会抛出异常，不过不影响服务
+                # 这里可能子进程subprocess已经结束了，例如错误的代码内容等
+                # 因此killpg时可能会抛出异常，不过不影响服务
                 # -9 和 137
                 try:
                     infoLogger.info('Error when run the script.\
@@ -212,7 +263,6 @@ class TaskConsumer(object):
             stdout.close()
             stderr.close()
         finally:
-            self.task_subproc = None
             return res
     
     def train_model(self):
@@ -232,6 +282,18 @@ class TaskConsumer(object):
             # 目前默认tar.gz
             datafile_name = self.task['data_file'].split('/')[-1]  
             compress_method = self.decompress_datafile(data_dir, datafile_name)
+            if compress_method == 'error':
+                resp = False
+                upload_str = ': '.join([self.task_status.name,self.task_desc])
+                while not resp:
+                    resp = self.client.post_task_output_str(
+                                    task_id=self.task['id'],
+                                    user_server_no=self.task['gpu_id'],
+                                    output_string=upload_str,
+                                    valid_or_not=False,
+                                    is_completed=True )
+                print('upload error info to server')
+                return data_dir
             '''
             fix this place
             '''
@@ -247,9 +309,25 @@ class TaskConsumer(object):
                 # 没有正常结束,retry
                 if res == 0:
                     script_res = True
+                    self.task_status = TaskStatus.TaskFinished
+                    self.task_desc = StatusDesc[self.task_status.value]
+                # 运行出错
+                elif res == 1:
+                    script_res = False
+                    self.task_status = TaskStatus.ScriptError
+                    self.task_desc = StatusDesc[self.task_status.value]
+                else:
+                    script_res = False
+                    # 看一下是否是超时或者服务器要求退出
+                    # 如果是，则马上跳出反馈信息
+                    if self.task_status == TaskStatus.TaskStopped or \
+                        self.task_status == TaskStatus.TaskTimeOut:
+                        break
+                    
                 if try_time >= 10:
                     infoLogger.info('Retry {times} times. Post latest retry log.'
                                     .format(times=try_time))
+                    self.task_desc += ' Upload after {} retries.'.format(try_time)
                     break
                 if res != 0:
                     sleep_time = random.randint(60,180)
@@ -261,8 +339,10 @@ class TaskConsumer(object):
             uploadfile_name = self.compress_model_result(data_dir, compress_method)
             infoLogger.info('Post result to server. Task {task_id}'
                             .format(task_id=self.task['id']))
+
+            upload_str = ': '.join([self.task_status.name,self.task_desc])
             client.post_task_result(self.task['id'], self.task['gpu_id'], 
-                                    output_string='task finished',
+                                    output_string=upload_str,
                                     valid_or_not=script_res,
                                     output_file=os.path.join(
                                         data_dir, uploadfile_name)
@@ -283,8 +363,9 @@ class TaskConsumer(object):
                                 Use GPU {gpu_id}'
                                 .format(task_id= self.task['id'],
                                         gpu_id= self.task['gpu_id']))
-                res = await self.co_loop.run_in_executor(
+                await self.co_loop.run_in_executor(
                                     None, self.train_model,)
+                self.clear_latest_task()
             except Exception:
                 errorLogger.error('\n'+str(traceback.format_exc())+'\n')
                 break
