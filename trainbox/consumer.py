@@ -11,7 +11,7 @@ import conn_profile as cf
 from firstquadrants import TaskClient
 import local_service as ls
 from enum import Enum, unique
-
+import shelve
 
 sys.path.append('logs')
 from logfile import errorLogger,infoLogger,debugLogger
@@ -36,11 +36,13 @@ StatusDesc = {
 }
 
 class TaskConsumer(object):
-
     client: TaskClient
     q_tasks: asyncio.Queue # 任务队列
     co_loop: asyncio.unix_events._UnixSelectorEventLoop
-
+    proc_tasks: list # 正在处理中的任务
+    db: shelve.DbfilenameShelf
+    co_lock = asyncio.Lock() # 共享协程锁，用于操作db
+    th_lock = threading.Lock()
     def __init__(self,cs_id):
         self.consumer_id = cs_id
         self.task = None
@@ -51,10 +53,20 @@ class TaskConsumer(object):
         self.task_desc = StatusDesc[self.task_status.value]
 
     def clear_latest_task(self):
+        self.proc_tasks.remove(self.task['id'])
         self.task = None
         self.task_subproc = None
         self.task_status = TaskStatus.UnKownError
         self.task_desc = StatusDesc[self.task_status.value]
+
+    def store_data_in_local(self, task_id, task_key, task_value):
+        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.dat')
+                                                        ,writeback=True)
+        self.db[str(task_id)][task_key] = task_value
+        self.db.close()
+    # 设置超时时长
+    def set_time_out(self, time):
+        self.time_out = time
 
     def decompress_datafile(self, data_dir, file_name):
         # 文件名错误怎么办？
@@ -143,7 +155,6 @@ class TaskConsumer(object):
         try:
             self.task_status = TaskStatus.TaskStopped
             self.task_desc = StatusDesc[self.task_status.value]
-            self.task_timer.cancel()
             infoLogger.info('Task {id} stop.'.format(id=self.task['id']))
             os.killpg(subproc.pid, 9)
         except Exception as err:
@@ -206,9 +217,8 @@ class TaskConsumer(object):
             debugLogger.debug("start train")
             # 创建
             stdout = open(log_file, 'w+')
-            stderr = open(err_file, 'w+')
             subproc = subprocess.Popen(args=cmd, bufsize=0, shell=True, 
-                                        stdout=subprocess.PIPE, stderr=stderr.fileno(), 
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
                                         preexec_fn=os.setsid, cwd=data_dir)
             infoLogger.info('Task {id} start train. Subprocess ID:{pid}'
                             .format(id=task_id, pid=subproc.pid))
@@ -259,9 +269,7 @@ class TaskConsumer(object):
                 except BaseException:
                     errorLogger.error('\n'+str(traceback.format_exc())+'\n')
             stdout.flush()
-            stderr.flush()
             stdout.close()
-            stderr.close()
         finally:
             return res
     
@@ -272,11 +280,48 @@ class TaskConsumer(object):
             # 训练过程出错，不需要再重新下载数据集
             # 注意:目前没有增加数据集下载过程出错的差错控制
             # 正在运行状态,注意gpu_id 对应于服务器端的user_server_no
-            if(self.task['status'] != 'RN'):
-                client.confirm_request(self.task['id'],self.task['gpu_id'])
+            if self.task['status'] == 'SB':
+                resp = False
+                while not resp:
+                    resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                self.th_lock.acquire()
+                self.store_data_in_local(str(self.task['id']),'status','DT')
+                self.th_lock.release()
+                infoLogger.info('Task {id} start download.'.format(id=self.task['id']))
                 client.get_task_data(task=self.task, 
                                     data_dir=data_dir, 
                                     user_server_no=self.task['gpu_id'])
+                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                print('start train')
+                infoLogger.info('Task {id} start train.'.format(id=self.task['id']))
+                self.th_lock.acquire()
+                self.store_data_in_local(str(self.task['id']),'status','RN')
+                self.th_lock.release()
+            elif self.task['status'] == 'DT':
+                infoLogger.info('Task {id} restart download.'.format(id=self.task['id']))
+                client.get_task_data(task=self.task, 
+                                    data_dir=data_dir, 
+                                    user_server_no=self.task['gpu_id'])
+                resp = False    
+                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                infoLogger.info('Task {id} restart train.'.format(id=self.task['id']))
+                self.th_lock.acquire()
+                self.store_data_in_local(str(self.task['id']),'status','RN')
+                self.th_lock.release()
+            # 重新跑了当前任务
+            elif self.task['status'] == 'RN':
+                infoLogger.info('Task {id} reload, and restart train.'.format(id=self.task['id']))
+                resp = False
+                while not resp:
+                    upload_str = 'Reload the task.\n'
+                    resp = self.client.post_task_output_str(
+                                    task_id=self.task['id'],
+                                    user_server_no=self.task['gpu_id'],
+                                    output_string=upload_str,
+                                    outstr_mode='write',
+                                    valid_or_not=True,
+                                    is_completed=False)
+                    
             # 默认python文件
             script_name = self.task['script_file'].split('/')[-1]  
             # 目前默认tar.gz
@@ -292,7 +337,10 @@ class TaskConsumer(object):
                                     output_string=upload_str,
                                     valid_or_not=False,
                                     is_completed=True )
-                print('upload error info to server')
+                self.th_lock.acquire()
+                self.store_data_in_local(str(self.task['id']),'status','IV')
+                self.th_lock.release()
+                debugLogger.debug('upload error info to server')
                 return data_dir
             '''
             fix this place
@@ -303,7 +351,6 @@ class TaskConsumer(object):
             script_res = False
             while res != 0:
                 try_time += 1
-                client.start_running_task(self.task['id'],self.task['gpu_id'])
                 res = self.run_script(data_dir, script_name, 
                                         self.task['gpu_id'], self.task['id'])
                 # 没有正常结束,retry
@@ -324,7 +371,7 @@ class TaskConsumer(object):
                         self.task_status == TaskStatus.TaskTimeOut:
                         break
                     
-                if try_time >= 10:
+                if try_time >= 3:
                     infoLogger.info('Retry {times} times. Post latest retry log.'
                                     .format(times=try_time))
                     self.task_desc += ' Upload after {} retries.'.format(try_time)
@@ -347,6 +394,12 @@ class TaskConsumer(object):
                                     output_file=os.path.join(
                                         data_dir, uploadfile_name)
                                     )
+            self.th_lock.acquire()
+            if script_res:
+                self.store_data_in_local(str(self.task['id']),'status','CP')
+            else:
+                self.store_data_in_local(str(self.task['id']),'status','IV')
+            self.th_lock.release()                        
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         else:
@@ -354,17 +407,41 @@ class TaskConsumer(object):
 
     async def process_tasks(self):
         q_tasks = self.q_tasks
+        
         while True:
             self.task = await q_tasks.get()
-            print('consumer{} process task in {}'.format(self.consumer_id,
-                                                self.task['dir']))
+            # print('consumer{} process task in {}'.format(self.consumer_id,
+            #                                     self.task['dir']))
             try:
-                infoLogger.info('Process task {task_id}. \
-                                Use GPU {gpu_id}'
+                task_id = str(self.task['id'])
+                self.proc_tasks.append(self.task['id'])
+                # 新提交的任务，写入本地数据库,带有文件夹
+                # 改变本地数据库要加锁
+                if self.task['status'] == 'SB':
+                    async with self.co_lock:
+                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                'tasks.dat'), writeback=True)
+                        self.db[task_id] = self.task
+                        self.db.close()
+                elif self.task['status'] == 'DT' or self.task['status'] == 'RN':
+                    self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                'tasks.dat'), flag='r')
+                    self.task['gpu_id'] = self.db[task_id]['gpu_id']
+                    self.task['dir'] = self.db[task_id]['dir']
+                    self.db.close()
+                else:
+                    errorLogger.error('Error task status')
+                    self.clear_latest_task()
+                    continue
+                
+                infoLogger.info('Process task {task_id}. Use GPU {index}. Start.'
                                 .format(task_id= self.task['id'],
-                                        gpu_id= self.task['gpu_id']))
+                                        index=self.task['gpu_id']))
                 await self.co_loop.run_in_executor(
                                     None, self.train_model,)
+                infoLogger.info('Process task {task_id}. Use GPU {index}. Over.'
+                                .format(task_id= self.task['id'],
+                                        index=self.task['gpu_id']))
                 self.clear_latest_task()
             except Exception:
                 errorLogger.error('\n'+str(traceback.format_exc())+'\n')

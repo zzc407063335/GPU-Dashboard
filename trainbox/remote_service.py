@@ -5,7 +5,7 @@ from threading import Thread
 import os, sys, traceback, random
 import subprocess, threading
 import json
-import psutil
+import psutil, shelve
 import asyncio
 from pynvml import *
 from pprint import pprint
@@ -85,14 +85,17 @@ def connect_to_remote_server(client):
 
     # 协程列表    
     coroutines = []
-
+    # 正在进行的任务
+    processing_list = []
     TaskProducer.client = client
     TaskProducer.q_tasks = q_tasks
     TaskProducer.co_loop = main_loop
+    TaskProducer.proc_tasks = processing_list
 
     TaskConsumer.client = client
     TaskConsumer.q_tasks = q_tasks
     TaskConsumer.co_loop = main_loop
+    TaskConsumer.proc_tasks = processing_list
 
     coroutines.append(producer.request_for_tasks())
 
@@ -109,6 +112,7 @@ def connect_to_remote_server(client):
             debugLogger.debug('\n'+str(traceback.format_exc())+'\n')
             infoLogger.info('Stop service.')
             main_loop.close()
+            db.close()
             break
             # main_loop.close()
 
