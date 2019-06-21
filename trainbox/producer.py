@@ -11,13 +11,25 @@ import conn_profile as cf
 from firstquadrants import TaskClient
 import local_service as ls
 
-sys.path.append('logs')
-from logfile import errorLogger,infoLogger,debugLogger
+from logs.logfile import errorLogger,infoLogger,debugLogger
+
+TaskStatusZh2En = {
+    '已提交':'SB',
+    '已分配':'DT',
+    '正在运行':'RN',
+    '已完成':'CP',
+    '任务无效':'IV',
+    '已终止':'ST',
+    '代码已更新':'CU',
+    '数据已更新':'DU',
+    '已恢复':'RC'
+}
 
 class TaskProducer(object):
     client: TaskClient
     q_tasks: asyncio.Queue # 任务队列
     co_loop: asyncio.unix_events._UnixSelectorEventLoop
+    co_lock: asyncio.locks.Lock
     proc_tasks: list # 正在处理中的任务
     
     def __init__(self):
@@ -113,23 +125,33 @@ class TaskProducer(object):
             # 设备分配待改进
             index_clt = 0
             for cur_task in new_tasks:
-                index_clt = (index_clt + 1) % devices_cnt
-                _dir = ''.join([hex(i) for i in os.urandom(10)])
-                local_dir = cf.LOCAL_DATA_DIR  
-                # 封装注意修改LOCAL_DATA_DIR
-                # 后面的data_dir 都是这个目录，即用户文件目录
-                # 新任务需要新建数据和模型的文件夹
-                _dir = os.path.join(local_dir, _dir)
-                cur_task['gpu_id'] = index_clt
-                cur_task['dir'] = _dir
-                # print(type(cur_task))
-                # f = open(os.path.join(cf.LOCAL_TASKS_DIR, 'tasks.txt'), 'a+')
-                # f.write(json.dumps(cur_task)+'\n')
-                # f.close()
-                infoLogger.info('Put task {task_id} in queue. Use GPU \
-                                    {gpu_id}'
-                                    .format(task_id=cur_task['id'],
-                                    gpu_id=cur_task['gpu_id']))
+                f_create = False
+                if TaskStatusZh2En[cur_task['status']] == 'SB':
+                    f_create = True                    
+                elif TaskStatusZh2En[cur_task['status']] == 'RC':
+                    async with self.co_lock:
+                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                    'tasks.dat'), flag='r')
+                        # 新来的任务
+                        if str(cur_task['id']) not in self.db.keys():
+                            f_create = True
+                        self.db.close()
+
+                if f_create :
+                    index_clt = (index_clt + 1) % devices_cnt
+                    _dir = ''.join([hex(i) for i in os.urandom(10)])
+                    local_dir = cf.LOCAL_DATA_DIR  
+                    # 封装注意修改LOCAL_DATA_DIR
+                    # 后面的data_dir 都是这个目录，即用户文件目录
+                    # 新任务需要新建数据和模型的文件夹
+                    _dir = os.path.join(local_dir, _dir)
+                    cur_task['gpu_id'] = index_clt
+                    cur_task['dir'] = _dir
+                    infoLogger.info('Put task {task_id}:{status} in queue. Use GPU \
+                                        {gpu_id}'
+                                        .format(task_id=cur_task['id'],
+                                        status=cur_task['status'],
+                                        gpu_id=cur_task['gpu_id']))
                 # print(cur_task)
                 await q_tasks.put(cur_task)
 

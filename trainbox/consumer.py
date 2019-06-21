@@ -1,10 +1,9 @@
 import requests
 import time
-from threading import Thread
 import os, sys, traceback, random
 import subprocess, threading
 import json
-import asyncio
+import asyncio, ctypes, inspect
 from pynvml import *
 from pprint import pprint
 import conn_profile as cf
@@ -13,10 +12,9 @@ import local_service as ls
 from enum import Enum, unique
 import shelve
 
-sys.path.append('logs')
-from logfile import errorLogger,infoLogger,debugLogger
+from logs.logfile import errorLogger,infoLogger,debugLogger
 
-
+import concurrent
 @unique
 class TaskStatus(Enum):
     TaskFinished = 0
@@ -24,6 +22,7 @@ class TaskStatus(Enum):
     DataSetError = 2
     TaskTimeOut = 3
     TaskStopped = 4
+    DownloadStopped = 5
     UnKownError = 127
 
 StatusDesc = {
@@ -32,17 +31,31 @@ StatusDesc = {
     TaskStatus.DataSetError.value: 'There was an error in decompression.',
     TaskStatus.TaskTimeOut.value: 'Task timeout.',
     TaskStatus.TaskStopped.value: 'Task stops.',
+    TaskStatus.DownloadStopped.value: 'Download stops',
     TaskStatus.UnKownError.value: 'Unknown error while running the script.'
 }
 
+TaskStatusZh2En = {
+    '已提交':'SB',
+    '已分配':'DT',
+    '正在运行':'RN',
+    '已完成':'CP',
+    '任务无效':'IV',
+    '已终止':'ST',
+    '代码已更新':'CU',
+    '数据已更新':'DU',
+    '已恢复':'RC'
+}
+
+concurrent.futures.ThreadPoolExecutor
 class TaskConsumer(object):
     client: TaskClient
     q_tasks: asyncio.Queue # 任务队列
     co_loop: asyncio.unix_events._UnixSelectorEventLoop
     proc_tasks: list # 正在处理中的任务
     db: shelve.DbfilenameShelf
-    co_lock = asyncio.Lock() # 共享协程锁，用于操作db
-    th_lock = threading.Lock()
+    co_lock: asyncio.locks.Lock # 共享协程锁，用于操作db
+    th_lock = threading.Lock() # 共享线程锁，用于train_model中操作db
     def __init__(self,cs_id):
         self.consumer_id = cs_id
         self.task = None
@@ -51,6 +64,23 @@ class TaskConsumer(object):
         self.task_subproc = None
         self.task_status = TaskStatus.UnKownError
         self.task_desc = StatusDesc[self.task_status.value]
+    
+    def stop_thread_tasks(self, thread, exctype=SystemExit):
+        # 这段代码摘录自知乎
+        tid = ctypes.c_long(thread.ident)
+        if not inspect.isclass(exctype):
+            exctype = type(exctype)
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, 
+                                        ctypes.py_object(exctype))
+        if res == 0:
+            raise ValueError("invalid thread id")
+        elif res != 1:
+            # """if it returns a number greater than one, you're 
+            # in trouble,
+            # and you should call it again with exc=NULL to 
+            # revert the effect"""
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, None)
+            raise SystemError("PyThreadState_SetAsyncExc failed")
 
     def clear_latest_task(self):
         self.proc_tasks.remove(self.task['id'])
@@ -60,10 +90,23 @@ class TaskConsumer(object):
         self.task_desc = StatusDesc[self.task_status.value]
 
     def store_data_in_local(self, task_id, task_key, task_value):
-        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,'tasks.dat')
-                                                        ,writeback=True)
+        self.th_lock.acquire()
+        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                'tasks.dat'), writeback=True)
         self.db[str(task_id)][task_key] = task_value
         self.db.close()
+        self.th_lock.release()
+
+    def read_data_in_local(self, task_id, task_key):
+        self.th_lock.acquire()
+        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                'tasks.dat'), flag='r')
+        if str(task_id) in self.db.keys():
+            return self.db[str(task_id)][task_key]
+        else:
+            return None
+        self.db.close()
+        self.th_lock.release()
     # 设置超时时长
     def set_time_out(self, time):
         self.time_out = time
@@ -93,8 +136,7 @@ class TaskConsumer(object):
             else:
                 infoLogger.info('Task {id} receive wrong data files.'.format(
                     id=self.task['id']))
-                self.task_status = TaskStatus.DataSetError
-                self.task_desc = StatusDesc[self.task_status.value]
+                self.set_task_desc(TaskStatus.DataSetError)
                 suffix_name = 'error'
                 # undefined decompress method
         except IndexError:
@@ -151,10 +193,13 @@ class TaskConsumer(object):
         else:
             return modelfile_name
 
+    def set_task_desc(self, _task_status):
+        self.task_status = _task_status
+        self.task_desc = StatusDesc[self.task_status.value]
+
     def stop_task(self, subproc):
         try:
-            self.task_status = TaskStatus.TaskStopped
-            self.task_desc = StatusDesc[self.task_status.value]
+            self.set_task_desc(TaskStatus.TaskStopped)
             infoLogger.info('Task {id} stop.'.format(id=self.task['id']))
             os.killpg(subproc.pid, 9)
         except Exception as err:
@@ -163,8 +208,7 @@ class TaskConsumer(object):
 
     def kill_time_out_task(self, subproc):
         try:
-            self.task_status = TaskStatus.TaskTimeOut
-            self.task_desc = StatusDesc[self.task_status.value]
+            self.set_task_desc(TaskStatus.TaskTimeOut)
             infoLogger.info('Task {id} time out.'.format(id=self.task['id']))
             os.killpg(subproc.pid, 9)
         except Exception as err:
@@ -177,7 +221,9 @@ class TaskConsumer(object):
             self.task_timer.cancel()
         except Exception as err:
             # 可能定时器不存在
-            pass
+            debugLogger.debug(err)
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            
         self.task_timer = threading.Timer(self.time_out, self.kill_time_out_task, 
                                             [subproc])
         self.task_timer.start()
@@ -236,7 +282,9 @@ class TaskConsumer(object):
                 resp = self.client.post_task_output_str(task_id=self.task['id'],
                                             user_server_no=self.task['gpu_id'], 
                                             output_string=line) 
-                # if not valid self.stop_task() break
+                if not resp: 
+                    self.stop_task(self.task_subproc) 
+                    break
 
             res = subproc.returncode
             # subproc.communicate()
@@ -278,39 +326,92 @@ class TaskConsumer(object):
         data_dir = self.task['dir']
         try:
             # 训练过程出错，不需要再重新下载数据集
-            # 注意:目前没有增加数据集下载过程出错的差错控制
             # 正在运行状态,注意gpu_id 对应于服务器端的user_server_no
-            if self.task['status'] == 'SB':
+            if TaskStatusZh2En[self.task['status']] == 'SB':
                 resp = False
                 while not resp:
                     resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
-                self.th_lock.acquire()
-                self.store_data_in_local(str(self.task['id']),'status','DT')
-                self.th_lock.release()
-                infoLogger.info('Task {id} start download.'.format(id=self.task['id']))
-                client.get_task_data(task=self.task, 
-                                    data_dir=data_dir, 
-                                    user_server_no=self.task['gpu_id'])
+                self.store_data_in_local(str(self.task['id']),
+                                        'status', 'DT')
+                infoLogger.info('Task {id} start download.'
+                                .format(id=self.task['id']))
+                down_th = threading.Thread(
+                                target=client.get_task_data,
+                                args=(self.task, 
+                                    data_dir,self.task['gpu_id']))
+                down_th.start()
+                while down_th.isAlive():
+                    time.sleep(5)
+                    info = client.get_task_info(self.task['id'])
+                    status = TaskStatusZh2En[info['status']]
+                    if status == 'ST':
+                        try:
+                            self.set_task_desc(TaskStatus.DownloadStopped)
+                            self.stop_thread_tasks(down_th)
+                            self.store_data_in_local(str(self.task['id']),
+                                            'status', 'ST')
+                        except Exception:
+                            errorLogger.error('\n'+
+                                str(traceback.format_exc())+'\n')
+                        else:
+                            infoLogger.info('Task {task_id} stop download.'
+                                            .format(task_id=self.task['id']))
+                        finally:
+                            upload_str = ': '.join([self.task_status.name,
+                                                self.task_desc])
+                            resp = self.client.post_task_output_str(
+                                    task_id=self.task['id'],
+                                    user_server_no=self.task['gpu_id'],
+                                    output_string=upload_str,
+                                    outstr_mode='append',
+                                    valid_or_not=True,
+                                    is_completed=False)
+                            return data_dir
+    
                 client.start_running_task(self.task['id'],self.task['gpu_id'])
-                print('start train')
                 infoLogger.info('Task {id} start train.'.format(id=self.task['id']))
-                self.th_lock.acquire()
                 self.store_data_in_local(str(self.task['id']),'status','RN')
-                self.th_lock.release()
-            elif self.task['status'] == 'DT':
+            # 下载没有进行完宕机了，需要重新下载
+            elif TaskStatusZh2En[self.task['status']] == 'DT':
                 infoLogger.info('Task {id} restart download.'.format(id=self.task['id']))
-                client.get_task_data(task=self.task, 
-                                    data_dir=data_dir, 
-                                    user_server_no=self.task['gpu_id'])
-                resp = False    
+                down_th = threading.Thread(target=client.get_task_data,args=(self.task, 
+                                    data_dir,self.task['gpu_id']))
+                down_th.start()
+                while down_th.isAlive():
+                    time.sleep(5)
+                    info = client.get_task_info(self.task['id'])
+                    status = TaskStatusZh2En[info['status']]
+                    if status == 'ST':
+                        try:
+                            self.set_task_desc(TaskStatus.DownloadStopped)
+                            self.stop_thread_tasks(down_th)
+                            self.store_data_in_local(str(self.task['id']),
+                                            'status', 'ST')
+                        except Exception:
+                            errorLogger.error('\n'+
+                                str(traceback.format_exc())+'\n')
+                        else:
+                            infoLogger.info('Task {task_id} stop download.'
+                                            .format(task_id=self.task['id']))
+                        finally:
+                            upload_str = ': '.join([self.task_status.name,
+                                                self.task_desc])
+                            resp = self.client.post_task_output_str(
+                                    task_id=self.task['id'],
+                                    user_server_no=self.task['gpu_id'],
+                                    output_string=upload_str,
+                                    outstr_mode='append',
+                                    valid_or_not=True,
+                                    is_completed=False)
+                            return data_dir
+            
                 client.start_running_task(self.task['id'],self.task['gpu_id'])
                 infoLogger.info('Task {id} restart train.'.format(id=self.task['id']))
-                self.th_lock.acquire()
-                self.store_data_in_local(str(self.task['id']),'status','RN')
-                self.th_lock.release()
-            # 重新跑了当前任务
-            elif self.task['status'] == 'RN':
-                infoLogger.info('Task {id} reload, and restart train.'.format(id=self.task['id']))
+                self.store_data_in_local(str(self.task['id']),'status','RN') 
+            # 运行当中宕机了，服务重启之后重新跑任务
+            elif TaskStatusZh2En[self.task['status']] == 'RN':
+                infoLogger.info('Task {id} reload, and restart train.'
+                                .format(id=self.task['id']))
                 resp = False
                 while not resp:
                     upload_str = 'Reload the task.\n'
@@ -321,12 +422,106 @@ class TaskConsumer(object):
                                     outstr_mode='write',
                                     valid_or_not=True,
                                     is_completed=False)
-                    
+            # 恢复的任务
+            elif TaskStatusZh2En[self.task['status']] == 'RC':
+                resp = False
+                while not resp:
+                    resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                self.store_data_in_local(str(self.task['id']),
+                                        'status', 'DT')
+                f_exist = self.read_data_in_local(
+                                        str(self.task[id]),'id') 
+                if f_exist == None:
+                    # the same as 'SB'
+                    infoLogger.info('Task {id} start download (recover).'
+                                .format(id=self.task['id']))
+                    down_th = threading.Thread(
+                                    target=client.get_task_data,
+                                    args=(self.task, 
+                                        data_dir,self.task['gpu_id']))
+                    down_th.start()
+                    while down_th.isAlive():
+                        time.sleep(5)
+                        info = client.get_task_info(self.task['id'])
+                        status = TaskStatusZh2En[info['status']]
+                        if status == 'ST':
+                            try:
+                                self.set_task_desc(TaskStatus.DownloadStopped)
+                                self.stop_thread_tasks(down_th)
+                                self.store_data_in_local(str(self.task['id']),
+                                                'status', 'ST')
+                            except Exception:
+                                errorLogger.error('\n'+
+                                    str(traceback.format_exc())+'\n')
+                            else:
+                                infoLogger.info('Task {task_id} stop download.'
+                                                .format(task_id=self.task['id']))
+                            finally:
+                                upload_str = ': '.join([self.task_status.name,
+                                                self.task_desc])
+                                resp = self.client.post_task_output_str(
+                                        task_id=self.task['id'],
+                                        user_server_no=self.task['gpu_id'],
+                                        output_string=upload_str,
+                                        outstr_mode='append',
+                                        valid_or_not=True,
+                                        is_completed=False)
+                                return data_dir
+                else:
+                    sc_local_time = self.read_data_in_local(str(self.task['id']),
+                                'script_last_update')
+                    dt_local_time = self.read_data_in_local(str(self.task['id']),
+                                'data_last_update')
+                    need_code = True if sc_local_time != self.task['script_last_update'] \
+                                        else False
+                    need_data = True if dt_local_time != self.task['data_last_update'] \
+                                        else False
+
+                    infoLogger.info('Task {id} start download (recover).'
+                                .format(id=self.task['id']))
+                    down_th = threading.Thread(
+                                target=client.get_task_data,
+                                args=(self.task, 
+                                    data_dir,self.task['gpu_id'],
+                                    need_data, need_code,))
+                    down_th.start()
+                    while down_th.isAlive():
+                        time.sleep(5)
+                        info = client.get_task_info(self.task['id'])
+                        status = TaskStatusZh2En[info['status']]
+                        if status == 'ST':
+                            try:
+                                self.set_task_desc(TaskStatus.DownloadStopped)
+                                self.stop_thread_tasks(down_th)
+                                self.store_data_in_local(str(self.task['id']),
+                                                'status', 'ST')
+                            except Exception:
+                                errorLogger.error('\n'+
+                                    str(traceback.format_exc())+'\n')
+                            else:
+                                infoLogger.info('Task {task_id} stop download (recover).'
+                                                .format(task_id=self.task['id']))
+                            finally:
+                                upload_str = ': '.join([self.task_status.name,
+                                                self.task_desc])
+                                resp = self.client.post_task_output_str(
+                                        task_id=self.task['id'],
+                                        user_server_no=self.task['gpu_id'],
+                                        output_string=upload_str,
+                                        outstr_mode='append',
+                                        valid_or_not=True,
+                                        is_completed=False)
+                                return data_dir
+                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                infoLogger.info('Task {id} start train (recover).'.format(id=self.task['id']))
+                self.store_data_in_local(str(self.task['id']),'status','RN')
+            
             # 默认python文件
             script_name = self.task['script_file'].split('/')[-1]  
             # 目前默认tar.gz
             datafile_name = self.task['data_file'].split('/')[-1]  
             compress_method = self.decompress_datafile(data_dir, datafile_name)
+            #解压出错
             if compress_method == 'error':
                 resp = False
                 upload_str = ': '.join([self.task_status.name,self.task_desc])
@@ -337,9 +532,7 @@ class TaskConsumer(object):
                                     output_string=upload_str,
                                     valid_or_not=False,
                                     is_completed=True )
-                self.th_lock.acquire()
                 self.store_data_in_local(str(self.task['id']),'status','IV')
-                self.th_lock.release()
                 debugLogger.debug('upload error info to server')
                 return data_dir
             '''
@@ -349,6 +542,7 @@ class TaskConsumer(object):
             res = -1
             try_time = 0
             script_res = False
+            # 这里的写法可以改进，tenacity retry 后面可以改进一下写法
             while res != 0:
                 try_time += 1
                 res = self.run_script(data_dir, script_name, 
@@ -356,13 +550,11 @@ class TaskConsumer(object):
                 # 没有正常结束,retry
                 if res == 0:
                     script_res = True
-                    self.task_status = TaskStatus.TaskFinished
-                    self.task_desc = StatusDesc[self.task_status.value]
+                    self.set_task_desc(TaskStatus.TaskFinished)
                 # 运行出错
                 elif res == 1:
                     script_res = False
-                    self.task_status = TaskStatus.ScriptError
-                    self.task_desc = StatusDesc[self.task_status.value]
+                    self.set_task_desc(TaskStatus.ScriptError)
                 else:
                     script_res = False
                     # 看一下是否是超时或者服务器要求退出
@@ -394,12 +586,10 @@ class TaskConsumer(object):
                                     output_file=os.path.join(
                                         data_dir, uploadfile_name)
                                     )
-            self.th_lock.acquire()
             if script_res:
                 self.store_data_in_local(str(self.task['id']),'status','CP')
             else:
                 self.store_data_in_local(str(self.task['id']),'status','IV')
-            self.th_lock.release()                        
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         else:
@@ -407,7 +597,8 @@ class TaskConsumer(object):
 
     async def process_tasks(self):
         q_tasks = self.q_tasks
-        
+        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                'tasks.dat'), flag='r')
         while True:
             self.task = await q_tasks.get()
             # print('consumer{} process task in {}'.format(self.consumer_id,
@@ -415,20 +606,33 @@ class TaskConsumer(object):
             try:
                 task_id = str(self.task['id'])
                 self.proc_tasks.append(self.task['id'])
-                # 新提交的任务，写入本地数据库,带有文件夹
+                # 新提交的任务或者恢复的任务，需要下载新的数据集
+                # 写入本地数据库,带有文件夹
                 # 改变本地数据库要加锁
-                if self.task['status'] == 'SB':
+                if TaskStatusZh2En[self.task['status']] == 'SB':
                     async with self.co_lock:
                         self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
                                                 'tasks.dat'), writeback=True)
                         self.db[task_id] = self.task
                         self.db.close()
-                elif self.task['status'] == 'DT' or self.task['status'] == 'RN':
-                    self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                'tasks.dat'), flag='r')
-                    self.task['gpu_id'] = self.db[task_id]['gpu_id']
-                    self.task['dir'] = self.db[task_id]['dir']
-                    self.db.close()
+                elif TaskStatusZh2En[self.task['status']] == 'DT' or \
+                    TaskStatusZh2En[self.task['status']] == 'RN':
+                    async with self.co_lock:
+                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                    'tasks.dat'), flag='r')
+                        self.task['gpu_id'] = self.db[task_id]['gpu_id']
+                        self.task['dir'] = self.db[task_id]['dir']
+                        self.db.close()
+                elif TaskStatusZh2En[self.task['status']] == 'RC':
+                    async with self.co_lock:
+                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                                    'tasks.dat'), writeback=True)
+                        if str(self.task['id']) in self.db.keys():
+                            self.task['gpu_id'] = self.db[task_id]['gpu_id']
+                            self.task['dir'] = self.db[task_id]['dir']
+                        else:
+                            self.db[task_id] = self.task
+                        self.db.close()
                 else:
                     errorLogger.error('Error task status')
                     self.clear_latest_task()

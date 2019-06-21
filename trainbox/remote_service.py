@@ -1,7 +1,6 @@
 # -*-coding:utf-8 -*-
 import requests
 import time
-from threading import Thread
 import os, sys, traceback, random
 import subprocess, threading
 import json
@@ -15,8 +14,7 @@ import local_service as ls
 from producer import TaskProducer
 from consumer import TaskConsumer
 
-sys.path.append('logs')
-from logfile import errorLogger,infoLogger,debugLogger
+from logs.logfile import errorLogger,infoLogger,debugLogger
 
 def check_user(username, password, protocol='http://', 
                             server_ip='127.0.0.1', port=8000):
@@ -83,6 +81,7 @@ def connect_to_remote_server(client):
     q_tasks = asyncio.Queue(
         loop=main_loop, maxsize=cf.TASK_COUNTS_MAX)
 
+    Lock = asyncio.Lock()
     # 协程列表    
     coroutines = []
     # 正在进行的任务
@@ -91,11 +90,13 @@ def connect_to_remote_server(client):
     TaskProducer.q_tasks = q_tasks
     TaskProducer.co_loop = main_loop
     TaskProducer.proc_tasks = processing_list
+    TaskProducer.co_lock = Lock
 
     TaskConsumer.client = client
     TaskConsumer.q_tasks = q_tasks
     TaskConsumer.co_loop = main_loop
     TaskConsumer.proc_tasks = processing_list
+    TaskConsumer.co_lock = Lock
 
     coroutines.append(producer.request_for_tasks())
 
@@ -112,7 +113,6 @@ def connect_to_remote_server(client):
             debugLogger.debug('\n'+str(traceback.format_exc())+'\n')
             infoLogger.info('Stop service.')
             main_loop.close()
-            db.close()
             break
             # main_loop.close()
 
