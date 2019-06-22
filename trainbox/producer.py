@@ -78,7 +78,7 @@ class TaskProducer(object):
         # f.close()
 
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(cf.QUERY_INTERVAL)
             new_tasks = []
             unfin_tasks = []
             try:
@@ -125,13 +125,15 @@ class TaskProducer(object):
             # 设备分配待改进
             index_clt = 0
             for cur_task in new_tasks:
+                if cur_task['id'] in self.proc_tasks:
+                    continue
                 f_create = False
                 if TaskStatusZh2En[cur_task['status']] == 'SB':
                     f_create = True                    
                 elif TaskStatusZh2En[cur_task['status']] == 'RC':
                     async with self.co_lock:
                         self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                    'tasks.dat'), flag='r')
+                                                    'tasks.dat'), flag='c')
                         # 新来的任务
                         if str(cur_task['id']) not in self.db.keys():
                             f_create = True
@@ -154,6 +156,8 @@ class TaskProducer(object):
                                         gpu_id=cur_task['gpu_id']))
                 # print(cur_task)
                 await q_tasks.put(cur_task)
+                self.proc_tasks.append(cur_task['id'])
+
 
             # 未完成的任务，直接丢到consumer处理
             for cur_task in unfin_tasks:
@@ -166,3 +170,4 @@ class TaskProducer(object):
                                     gpu_id=cur_task['gpu_id']))
                 # print(cur_task)
                 await q_tasks.put(cur_task)
+                self.proc_tasks.append(cur_task['id'])

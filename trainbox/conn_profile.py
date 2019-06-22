@@ -11,6 +11,8 @@ USER_NAME = os.environ.get('USER_NAME')# "zzczzc"
 USER_PASS = os.environ.get('USER_PASS')# "zzc997997"
 LOCAL_PORT = os.environ.get('LOCAL_PORT')
 TASK_COUNTS_MAX = int(os.environ.get('MAX_TASK_NUMBER'))
+
+QUERY_INTERVAL = 5
 TIME_OUT = 24*60*60*7
 
 LOCAL_DATA_DIR = '/data' 
