@@ -75,6 +75,7 @@ def connect_to_remote_server(client):
                             .format(index=i))
             if flag != None:
                 debugLogger.debug('true')
+    
     producer = TaskProducer()
     
     main_loop = asyncio.get_event_loop()

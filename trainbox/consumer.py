@@ -210,6 +210,8 @@ class TaskConsumer(object):
             self.set_task_desc(TaskStatus.TaskStopped)
             infoLogger.info('Task {id} stop.'.format(id=self.task['id']))
             os.killpg(subproc.pid, 9)
+            subproc.kill()
+            subproc.communicate()
         except Exception as err:
             debugLogger.debug(err)
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
@@ -235,14 +237,14 @@ class TaskConsumer(object):
         self.task_timer = threading.Timer(self.time_out, self.kill_time_out_task, 
                                             [subproc])
         self.task_timer.start()
-            
+
     def run_script(self, data_dir, script_name, gpu_index, task_id):
         # 目前支持python训练文件
         # tf keras pytorch 应该分开？
 
         # PYTHONUNBUFFERED=1 默认不使用缓存，实时获取STDOUT输出 
-        cmd = 'CUDA_VISIBLE_DEVICES={index} PYTHONUNBUFFERED=1 python {script}'.format(
-            index=gpu_index, script=script_name)
+        cmd = 'CUDA_VISIBLE_DEVICES={index} PYTHONUNBUFFERED=1 python {script}'\
+            .format(index=gpu_index, script=script_name)
 
         # 创建result 文件夹
         if not os.path.exists(os.path.join(data_dir, cf.LOCAL_RESULT_DIR)):
@@ -289,9 +291,17 @@ class TaskConsumer(object):
                 # 反馈输出
                 resp = False
                 while not resp:
-                    resp = self.client.post_task_output_str(task_id=self.task['id'],
+                    try:
+                        # 网络原因可能出错，这里缺乏重传机制，写死一直请求
+                        resp = self.client.post_task_output_str(task_id=self.task['id'],
                                             user_server_no=self.task['gpu_id'], 
-                                            output_string=line) 
+                                            output_string=line)
+                    except Exception as err:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} post string error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
                 if TaskStatusZh2En[resp] == 'ST': 
                     self.stop_task(self.task_subproc)
                     self.set_status_transfer('ST','RN')
@@ -299,10 +309,17 @@ class TaskConsumer(object):
                     resp = False
                     # 反馈停止训练
                     while not resp:
-                        resp = self.client.post_task_output_str(
+                        try:
+                            resp = self.client.post_task_output_str(
                                         task_id=self.task['id'],
                                         user_server_no=self.task['gpu_id'], 
-                                        output_string=upload_str) 
+                                        output_string=upload_str)
+                        except Exception as err:
+                            resp = False
+                            time.sleep(random.randint(1,2))
+                            infoLogger.info('Task {id} stop error. Network error.'\
+                                        .format(id=self.task['id']))
+                            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
                     break
 
             res = subproc.returncode
@@ -341,6 +358,7 @@ class TaskConsumer(object):
             stdout.flush()
             stdout.close()
         finally:
+            res = subproc.returncode
             return res
     
     def train_model(self):
@@ -352,11 +370,20 @@ class TaskConsumer(object):
             if TaskStatusZh2En[self.task['status']] == 'SB':
                 resp = False
                 while not resp:
-                    resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                    try:
+                        resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
                 # SB => DT
                 self.set_status_transfer('DT', 'SB')
                 infoLogger.info('Task {id} start download.'
                                 .format(id=self.task['id']))
+                
+                # 如果client.get_task_data,失败怎么办？
                 down_th = threading.Thread(
                                 target=client.get_task_data,
                                 args=(self.task, 
@@ -364,7 +391,16 @@ class TaskConsumer(object):
                 down_th.start()
                 while down_th.isAlive():
                     time.sleep(cf.QUERY_INTERVAL)
-                    info = client.get_task_info(self.task['id'])
+                    try:
+                        info = client.get_task_info(self.task['id'])
+                    except Exception:
+                        info = None
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} request task info error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                    if info == None:
+                        continue
                     status = TaskStatusZh2En[info['status']]
                     if status == 'ST':
                         try:
@@ -377,19 +413,41 @@ class TaskConsumer(object):
                         else:
                             infoLogger.info('Task {task_id} stop download.'
                                             .format(task_id=self.task['id']))
-                        finally:
-                            upload_str = '\n' + ': '.join([self.task_status.name,
+                        
+                        resp = False
+                        while not resp:
+                            try:
+                                upload_str = '\n' + ': '.join([
+                                                self.task_status.name,
                                                 self.task_desc])
-                            resp = self.client.post_task_output_str(
+                                resp = self.client.post_task_output_str(
                                     task_id=self.task['id'],
                                     user_server_no=self.task['gpu_id'],
                                     output_string=upload_str,
                                     outstr_mode='append',
                                     valid_or_not=True,
                                     is_completed=False)
-                            return data_dir
-    
-                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                            except Exception:
+                                resp = False
+                                time.sleep(random.randint(1,2))
+                                infoLogger.info('Task {id} stop error. Network error.'\
+                                        .format(id=self.task['id']))
+                                errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                        return data_dir
+                
+                resp = False
+                while not resp:
+                    try:
+                        resp = client.start_running_task(self.task['id'],
+                                                        self.task['gpu_id'])
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm running error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')  
+                    else:
+                        resp = True
                 infoLogger.info('Task {id} start train.'.format(id=self.task['id']))
                 self.set_status_transfer('RN', 'DT')
 
@@ -397,39 +455,71 @@ class TaskConsumer(object):
             elif TaskStatusZh2En[self.task['status']] == 'DT':
                 infoLogger.info('Task {id} restart download.'
                                 .format(id=self.task['id']))
+
                 down_th = threading.Thread(target=client.get_task_data,
                                     args=(self.task, 
                                         data_dir,self.task['gpu_id']))
                 down_th.start()
                 while down_th.isAlive():
                     time.sleep(cf.QUERY_INTERVAL)
-                    info = client.get_task_info(self.task['id'])
+                    try:
+                        info = client.get_task_info(self.task['id'])
+                    except Exception:
+                        info = None
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} request task info error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+
+                    if info == None:
+                        continue
                     status = TaskStatusZh2En[info['status']]
                     if status == 'ST':
                         try:
                             self.set_task_desc(TaskStatus.DownloadStopped)
                             self.stop_thread_tasks(down_th)
                             self.set_status_transfer('ST', 'DT')
-
                         except Exception:
                             errorLogger.error('\n'+
                                 str(traceback.format_exc())+'\n')
                         else:
                             infoLogger.info('Task {task_id} stop download.'
                                             .format(task_id=self.task['id']))
-                        finally:
-                            upload_str = '\n' + ': '.join([self.task_status.name,
+                        
+                        resp = False
+                        while not resp:
+                            try:
+                                upload_str = '\n' + ': '.join([
+                                                self.task_status.name,
                                                 self.task_desc])
-                            resp = self.client.post_task_output_str(
+                                resp = self.client.post_task_output_str(
                                     task_id=self.task['id'],
                                     user_server_no=self.task['gpu_id'],
                                     output_string=upload_str,
                                     outstr_mode='append',
                                     valid_or_not=True,
                                     is_completed=False)
-                            return data_dir
-            
-                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                            except Exception:
+                                resp = False
+                                time.sleep(random.randint(1,2))
+                                infoLogger.info('Task {id} stop error. Network error.'\
+                                        .format(id=self.task['id']))
+                                errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                        return data_dir
+                
+                resp = False
+                while not resp:
+                    try:
+                        resp = client.start_running_task(self.task['id'],
+                                                        self.task['gpu_id'])
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm running error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')  
+                    else:
+                        resp = True
                 infoLogger.info('Task {id} restart train.'.format(id=self.task['id']))
                 self.set_status_transfer('RN', 'DT')
 
@@ -437,27 +527,44 @@ class TaskConsumer(object):
             elif TaskStatusZh2En[self.task['status']] == 'RN':
                 infoLogger.info('Task {id} reload, and restart train.'
                                 .format(id=self.task['id']))
+                self.set_status_transfer('RN', 'RN')
                 resp = False
                 while not resp:
-                    upload_str = 'Reload the task.\n'
-                    resp = self.client.post_task_output_str(
+                    try:
+                        upload_str = 'Reload the task.\n'
+                        resp = self.client.post_task_output_str(
                                     task_id=self.task['id'],
                                     user_server_no=self.task['gpu_id'],
                                     output_string=upload_str,
                                     outstr_mode='write',
                                     valid_or_not=True,
                                     is_completed=False)
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm re-running error. Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')  
+
+                    
             # 恢复的任务
             elif TaskStatusZh2En[self.task['status']] == 'RC':
                 resp = False
                 while not resp:
-                    resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                    try:
+                        resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm error (recover). Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
 
                 f_exist = self.read_data_in_local(
                                         str(self.task['id']),'id') 
                 if f_exist == None:
                     # the same as 'SB'
-                    print('save')
+                    infoLogger.info('Task {} save info. (recover)'.format(self.task['id']))
                     self.th_lock.acquire()
                     # 把新来的恢复任务先存下来
                     self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
@@ -476,31 +583,49 @@ class TaskConsumer(object):
                     down_th.start()
                     while down_th.isAlive():
                         time.sleep(cf.QUERY_INTERVAL)
-                        info = client.get_task_info(self.task['id'])
+                        try:
+                            info = client.get_task_info(self.task['id'])
+                        except Exception:
+                            info = None
+                            time.sleep(random.randint(1,2))
+                            infoLogger.info('Task {id} request task info error (recover). Network error.'\
+                                        .format(id=self.task['id']))
+                            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                        if info == None:
+                            continue
                         status = TaskStatusZh2En[info['status']]
                         if status == 'ST':
                             try:
                                 self.set_task_desc(TaskStatus.DownloadStopped)
                                 self.stop_thread_tasks(down_th)
                                 self.set_status_transfer('ST', 'DT')
-
                             except Exception:
                                 errorLogger.error('\n'+
                                     str(traceback.format_exc())+'\n')
                             else:
-                                infoLogger.info('Task {task_id} stop download.'
+                                infoLogger.info('Task {task_id} stop download (recover).'
                                                 .format(task_id=self.task['id']))
-                            finally:
-                                upload_str = '\n'+': '.join([self.task_status.name,
+                            resp = False
+                            while not resp:
+                                try:
+                                    upload_str = '\n'+': '.join([self.task_status.name,
                                                 self.task_desc])
-                                resp = self.client.post_task_output_str(
+                                    resp = self.client.post_task_output_str(
                                         task_id=self.task['id'],
                                         user_server_no=self.task['gpu_id'],
                                         output_string=upload_str,
                                         outstr_mode='append',
                                         valid_or_not=True,
                                         is_completed=False)
-                                return data_dir
+                                except Exception:
+                                    resp = False
+                                    time.sleep(random.randint(1,2))
+                                    infoLogger.info('Task {id} stop error (recover).\
+                                                    Network error.'\
+                                        .format(id=self.task['id']))
+                                    errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+
+                            return data_dir
                 else:
                     last_status = self.read_data_in_local(str(self.task['id']),'last_status')
                     self.set_status_transfer('DT', 'RC')
@@ -518,11 +643,19 @@ class TaskConsumer(object):
                                             else False
                         need_data = True if dt_local_time != self.task['data_last_update'] \
                                             else False
+                        if need_code :
+                            self.store_data_in_local(str(self.task['id']),
+                                                        'script_last_update',
+                                                        self.task['script_last_update'])
+                        if need_data :
+                            self.store_data_in_local(str(self.task['id']),'data_last_update',
+                                                        self.task['data_last_update'])
                         print('sc_local_time:',sc_local_time)
                         print('dt_local_time:',dt_local_time)
                         print('sc_new_time:',self.task['script_last_update'])
                         print('dt_new_time:',self.task['data_last_update'])
                     print(need_code,need_data)
+                    
                     infoLogger.info('Task {id} start download (recover).'
                                 .format(id=self.task['id']))
                     down_th = threading.Thread(
@@ -533,32 +666,64 @@ class TaskConsumer(object):
                     down_th.start()
                     while down_th.isAlive():
                         time.sleep(cf.QUERY_INTERVAL)
-                        info = client.get_task_info(self.task['id'])
+                        try:
+                            info = client.get_task_info(self.task['id'])
+                        except Exception:
+                            info = None
+                            time.sleep(random.randint(1,2))
+                            infoLogger.info('Task {id} request task info error (recover).\
+                                             Network error.'\
+                                        .format(id=self.task['id']))
+                            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                        if info == None:
+                            continue
                         status = TaskStatusZh2En[info['status']]
                         if status == 'ST':
                             try:
                                 self.set_task_desc(TaskStatus.DownloadStopped)
                                 self.stop_thread_tasks(down_th)
                                 self.set_status_transfer('ST', 'DT')
-
                             except Exception:
                                 errorLogger.error('\n'+
                                     str(traceback.format_exc())+'\n')
                             else:
                                 infoLogger.info('Task {task_id} stop download (recover).'
                                                 .format(task_id=self.task['id']))
-                            finally:
-                                upload_str = '\n' + ': '.join([self.task_status.name,
+                            resp = False
+                            while not resp:
+                                try:
+                                    upload_str = '\n' + ': '.join([self.task_status.name,
                                                 self.task_desc])
-                                resp = self.client.post_task_output_str(
+                                    resp = self.client.post_task_output_str(
                                         task_id=self.task['id'],
                                         user_server_no=self.task['gpu_id'],
                                         output_string=upload_str,
                                         outstr_mode='append',
                                         valid_or_not=True,
                                         is_completed=False)
-                                return data_dir
-                client.start_running_task(self.task['id'],self.task['gpu_id'])
+                                except Exception:
+                                    resp = False
+                                    time.sleep(random.randint(1,2))
+                                    infoLogger.info('Task {id} stop error (recover).\
+                                                     Network error.'\
+                                                    .format(id=self.task['id']))
+                                    errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                            return data_dir
+                
+                resp = False
+                while not resp:
+                    try:
+                        resp = client.start_running_task(self.task['id'],
+                                                        self.task['gpu_id'])
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} confirm running error (recover).\
+                                         Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')  
+                    else:
+                        resp = True
                 infoLogger.info('Task {id} start train (recover).'.format(id=self.task['id']))
                 self.set_status_transfer('RN', 'DT')
 
@@ -571,16 +736,27 @@ class TaskConsumer(object):
             #解压出错
             if compress_method == 'error':
                 resp = False
-                upload_str = '\n' + ': '.join([self.task_status.name,self.task_desc])
                 while not resp:
-                    resp = self.client.post_task_output_str(
+                    try:
+                        upload_str = '\n' + ': '.join([
+                                    self.task_status.name,
+                                    self.task_desc])
+                        resp = self.client.post_task_output_str(
                                     task_id=self.task['id'],
                                     user_server_no=self.task['gpu_id'],
                                     output_string=upload_str,
                                     valid_or_not=False,
                                     is_completed=True )
+                    except Exception:
+                        resp = False
+                        time.sleep(random.randint(1,2))
+                        infoLogger.info('Task {id} post decompress error.\
+                                         Network error.'\
+                                        .format(id=self.task['id']))
+                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                        
+                    
                 self.set_status_transfer('IV', 'RN')
-
 
                 debugLogger.debug('upload error info to server')
                 return data_dir
@@ -631,12 +807,25 @@ class TaskConsumer(object):
 
             # 上传结果不能停止
             upload_str = ': '.join([self.task_status.name,self.task_desc])
-            client.post_task_result(self.task['id'], self.task['gpu_id'], 
+            resp = False
+            while not resp:
+                try:
+                    client.post_task_result(self.task['id'], self.task['gpu_id'], 
                                     output_string=upload_str,
                                     valid_or_not=script_res,
                                     output_file=os.path.join(
                                         data_dir, uploadfile_name)
                                     )
+                except Exception:
+                    resp = False
+                    time.sleep(random.randint(1,2))
+                    infoLogger.info('Task {id} post result error. Network error.'\
+                                        .format(id=self.task['id']))
+                    errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                else:
+                    # 上传成功就退出呗
+                    resp = True
+            
             if script_res:
                 self.set_status_transfer('CP', 'RN')
             else:
