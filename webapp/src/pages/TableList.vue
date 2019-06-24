@@ -82,8 +82,8 @@ import { PaperTable, StatsCard } from "@/components";
 import NotificationTemplate from './Notifications/NotificationTemplate';
 
 import VeLine from 'v-charts/lib/line.common'
-const queryURL = "http://127.0.0.1:5002/gpuinfo/" //后面要写到配置文件
-
+// const queryURL = "http://train_box:5002/gpuinfo/" //后面要写到配置文件
+const queryURL = "/gpuinfo/"
 import axios from 'axios'
 
 export default {

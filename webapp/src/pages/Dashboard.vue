@@ -149,8 +149,8 @@ import VeLine from 'v-charts/lib/line.common'
 import VeGauge from 'v-charts/lib/gauge.common'
 import Chartist from 'chartist';
 import axios from 'axios'
-const queryURL = "http://127.0.0.1:5002/gpuinfo/" //后面需要写入到配置文件
-
+// const queryURL = "http://127.0.0.1:5002/gpuinfo/" //后面需要写入到配置文件
+const queryURL = "/gpuinfo/"
 export default {
   components: {
     VeGauge,
