@@ -853,6 +853,7 @@ class TaskConsumer(object):
                         self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
                                                 'tasks.dat'), writeback=True)
                         self.db[task_id] = self.task
+                        # print(self.db[task_id])
                         self.db.close()
                 elif TaskStatusZh2En[self.task['status']] == 'DT' or \
                     TaskStatusZh2En[self.task['status']] == 'RN':

@@ -43,6 +43,15 @@ class TaskProducer(object):
             devices_cnt = len(devices)
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+        
+        async with self.co_lock:
+            self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
+                                    'tasks.dat'), flag='c')
+                        # 新来的任务
+            for key in self.db.keys():
+                print(key)
+                pprint(self.db[key])
+            self.db.close()
         '''
         首先请求未完成任务列表
         '''
