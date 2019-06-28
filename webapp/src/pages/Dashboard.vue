@@ -75,7 +75,7 @@
                 <ve-line style="width: auto; height: 350px; position: relative;" :data="usagerateData" :settings="percentChartSettings" :extend="percentChartExtend" :colors="usagecolors"></ve-line>
                 <div class="footer">
                   <div class="stats text-center">
-                      <span><i class="ti-reload"></i> 30s刷新 </span>
+                      <span><i class="ti-reload"></i> {{intervalTime/1000}}s 刷新 </span>
                   </div>
                 </div>
             </div>
@@ -90,7 +90,7 @@
               <ve-line style="width: auto; height: 350px; position: relative;" :colors="fancolors" :data="fanData" :settings="percentChartSettings" :extend="percentChartExtend"></ve-line>
               <div class="footer">
                 <div class="stats text-center">
-                    <span><i class="ti-reload"></i> 30s刷新 </span>
+                    <span><i class="ti-reload"></i> {{intervalTime/1000}}s 刷新 </span>
                 </div>
               </div>
             </div>
@@ -105,7 +105,7 @@
               <ve-line style="width: auto; height: 350px; position: relative;" :colors="tempcolors" :data="tempData" :settings="normolChartSettings" :extend="tempExtend"></ve-line>
               <div class="footer">
                 <div class="stats text-center">
-                    <span><i class="ti-reload"></i> 30s刷新 </span>
+                    <span><i class="ti-reload"></i> {{intervalTime/1000}}s 刷新 </span>
                 </div>
               </div>
             </div>
@@ -120,7 +120,7 @@
               <ve-line style="width: auto; height: 350px; position: relative;" :colors="powercolors" :data="powerData" :settings="normolChartSettings" :extend="powerExtend"></ve-line>
               <div class="footer">
                 <div class="stats text-center">
-                    <span><i class="ti-reload"></i> 30s刷新 </span>
+                    <span><i class="ti-reload"></i> {{intervalTime/1000}}s 刷新 </span>
                 </div>
               </div>
             </div>
