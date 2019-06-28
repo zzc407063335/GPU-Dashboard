@@ -42,7 +42,7 @@
                   <ve-line style="width: auto; height: 350px; position: relative;" :data="memData" :settings="normolChartSettings" :extend="memExtend" :colors="memcolors"></ve-line>
                   <div class="footer">
                     <div class="stats text-center">
-                        <span><i class="ti-reload"></i> 30s刷新 </span>
+                        <span><i class="ti-reload"></i> {{intervalTime/1000}}s 刷新 </span>
                     </div>
                   </div>
               </div>
@@ -57,7 +57,7 @@
                 <ve-line style="width: auto; height: 350px; position: relative;" :colors="bar1memcolors" :data="bar1memData" :settings="normolChartSettings" :extend="bar1memExtend"></ve-line>
                 <div class="footer">
                   <div class="stats text-center">
-                      <span><i class="ti-reload"></i> 30s刷新 </span>
+                      <span><i class="ti-reload"></i> {{intervalTime/1000}} 刷新 </span>
                   </div>
                 </div>
               </div>
