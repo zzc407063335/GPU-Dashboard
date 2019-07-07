@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
+
 '''
 获取GPU设备信息的api函数，可用于监控程序
 '''
-
 from pynvml import *
 import json
 # 系列名称

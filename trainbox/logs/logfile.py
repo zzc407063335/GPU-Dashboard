@@ -1,4 +1,6 @@
-import logging, logging.config
+# -*- coding: utf-8 -*-
+
+import logging, logging.config, cloghandler
 import os
 import datetime
 

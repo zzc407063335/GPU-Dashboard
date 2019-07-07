@@ -1,12 +1,14 @@
+# -*- coding: utf-8 -*-
+
 import requests
 import time
-import os, sys, traceback, random
+import os, sys, traceback, random, fcntl
 import subprocess, threading
 import json
 import asyncio, ctypes, inspect
 from pynvml import *
 from pprint import pprint
-import conn_profile as cf
+import conn_file_r as cf
 from firstquadrants import TaskClient
 import local_service as ls
 from enum import Enum, unique
@@ -44,18 +46,19 @@ TaskStatusZh2En = {
     '已停止':'ST',
     '代码已更新':'CU',
     '数据已更新':'DU',
-    '已恢复':'RC'
+    '已恢复':'RC',
+    '已完成':'CP'
 }
 
-concurrent.futures.ThreadPoolExecutor
 class TaskConsumer(object):
-    client: TaskClient
+    client=TaskClient(cf.USER_NAME,cf.USER_PASS)
     q_tasks: asyncio.Queue # 任务队列
     co_loop: asyncio.unix_events._UnixSelectorEventLoop
     proc_tasks: list # 正在处理中的任务
     db: shelve.DbfilenameShelf
     co_lock: asyncio.locks.Lock # 共享协程锁，用于操作db
-    th_lock = threading.Lock() # 共享线程锁，用于train_model中操作db
+    # th_lock = threading.Lock() # 共享线程锁，用于train_model中操作db
+    
     def __init__(self,cs_id):
         self.consumer_id = cs_id
         self.task = None
@@ -64,7 +67,26 @@ class TaskConsumer(object):
         self.task_subproc = None
         self.task_status = TaskStatus.UnKownError
         self.task_desc = StatusDesc[self.task_status.value]
+        self.owner = 'zzc407063335'
     
+    def _opendb(self,filename,mode='c'):       
+        lockfilemode = 'a'
+        lockmode = fcntl.LOCK_EX  
+        self.lockfd = open(filename+'.lck', lockfilemode)
+        
+        try:
+            fcntl.flock(self.lockfd.fileno(), lockmode)
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            return (None, None)
+        self.db = shelve.open(filename, flag=mode,\
+                        writeback=True)
+
+    def _closedb(self):
+        self.db.close()
+        fcntl.flock(self.lockfd.fileno(),fcntl.LOCK_UN)
+        self.lockfd.close()
+
     def stop_thread_tasks(self, thread, exctype=SystemExit):
         # 这段代码摘录自知乎
         tid = ctypes.c_long(thread.ident)
@@ -96,28 +118,26 @@ class TaskConsumer(object):
                                         'last_status', last_status)
 
     def store_data_in_local(self, task_id, task_key, task_value):
-        self.th_lock.acquire()
-        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                'tasks.dat'), writeback=True)
+        # self.th_lock.acquire()
+        self._opendb(filename=os.path.join(cf.LOCAL_TASKS_DIR,
+                                'tasks.dat'),mode='c')
         self.db[str(task_id)][task_key] = task_value
-        self.db.close()
-        self.th_lock.release()
+        self._closedb()
+        # self.th_lock.release()
 
     def read_data_in_local(self, task_id, task_key):
-        self.th_lock.acquire()
-        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                'tasks.dat'), flag='r')
+        # self.th_lock.acquire()
+        self._opendb(filename=os.path.join(cf.LOCAL_TASKS_DIR,
+                                'tasks.dat'),mode='c')
         res = None
         if str(task_id) in self.db.keys():
             res = self.db[str(task_id)][task_key]
         else:
             res = None
-        self.db.close()
-        self.th_lock.release()
+        self._closedb()
+        # self.th_lock.release()
         return res
     # 设置超时时长
-    def set_time_out(self, time):
-        self.time_out = time
 
     def decompress_datafile(self, data_dir, file_name):
         # 文件名错误怎么办？
@@ -148,222 +168,121 @@ class TaskConsumer(object):
                 suffix_name = 'error'
                 # undefined decompress method
         except IndexError:
-            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            errorLogger.error('\n'+str(traceback.format_exc())+'\21:56n')
         except IOError:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         else:
             return suffix_name
-    
-    def compress_model_result(self, data_dir, method):
-        try:
-            modelfile_name = 'result.tar.gz'
-            if method == 'tar.gz':
-                modelfile_name = 'result.tar.gz'
-                import tarfile
-                tar = tarfile.open(os.path.join(data_dir, modelfile_name), "w:gz")
-                startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-                for dirpath, _, filenames in os.walk(startdir):
-                    for filename in filenames:
-                        path_file = os.path.join(dirpath, filename)
-                        # 去除/data/0x.......的前缀
-                        arcname = path_file[len(data_dir):].strip(os.path.sep)
-                        tar.add(path_file, arcname)
-                tar.close()
-
-            elif method == 'zip':
-                modelfile_name = 'result.zip'
-                import zipfile
-                z = zipfile.ZipFile(os.path.join(
-                    data_dir, modelfile_name), 'w', zipfile.ZIP_DEFLATED)
-                startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-                for dirpath, _, filenames in os.walk(startdir):
-                    for filename in filenames:
-                        path_file = os.path.join(dirpath, filename)
-                        # 去除/data/0x.......的前缀
-                        arcname = path_file[len(data_dir):].strip(os.path.sep)
-                        z.write(path_file, arcname)
-                z.close()
-            # 默认zip
-            else:
-                modelfile_name = 'result.zip'
-                import zipfile
-                z = zipfile.ZipFile(os.path.join(
-                    data_dir, modelfile_name), 'w', zipfile.ZIP_DEFLATED)
-                startdir = os.path.join(data_dir, cf.LOCAL_RESULT_DIR)
-                for dirpath, _, filenames in os.walk(startdir):
-                    for filename in filenames:
-                        path_file = os.path.join(dirpath, filename)
-                        arcname = path_file[len(data_dir):].strip(os.path.sep)
-                        z.write(path_file, arcname)
-                z.close()
-        except Exception:
-            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-        else:
-            return modelfile_name
 
     def set_task_desc(self, _task_status):
         self.task_status = _task_status
         self.task_desc = StatusDesc[self.task_status.value]
 
-    def stop_task(self, subproc):
-        try:
-            self.set_task_desc(TaskStatus.TaskStopped)
-            infoLogger.info('Task {id} stop.'.format(id=self.task['id']))
-            os.killpg(subproc.pid, 9)
-            subproc.kill()
-            subproc.communicate()
-        except Exception as err:
-            debugLogger.debug(err)
-            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-
-    def kill_time_out_task(self, subproc):
-        try:
-            self.set_task_desc(TaskStatus.TaskTimeOut)
-            infoLogger.info('Task {id} time out.'.format(id=self.task['id']))
-            os.killpg(subproc.pid, 9)
-        except Exception as err:
-            debugLogger.debug(err)
-            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-
-    def set_task_timer(self, time, subproc):
-        self.time_out = time
-        try:
-            self.task_timer.cancel()
-        except Exception as err:
-            # 可能定时器不存在
-            debugLogger.debug(err)
-            # errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-            
-        self.task_timer = threading.Timer(self.time_out, self.kill_time_out_task, 
-                                            [subproc])
-        self.task_timer.start()
-
-    def run_script(self, data_dir, script_name, gpu_index, task_id):
-        # 目前支持python训练文件
-        # tf keras pytorch 应该分开？
-
-        # PYTHONUNBUFFERED=1 默认不使用缓存，实时获取STDOUT输出 
-        cmd = 'CUDA_VISIBLE_DEVICES={index} PYTHONUNBUFFERED=1 python {script}'\
-            .format(index=gpu_index, script=script_name)
-
-        # 创建result 文件夹
-        if not os.path.exists(os.path.join(data_dir, cf.LOCAL_RESULT_DIR)):
-            os.makedirs(os.path.join(data_dir, cf.LOCAL_RESULT_DIR))
-
-        log_file = os.path.join(data_dir, 
-                                cf.LOCAL_RESULT_DIR, 
-                                cf.LOG_INFO_NAME)
-        err_file = os.path.join(data_dir, 
-                                cf.LOCAL_RESULT_DIR, 
-                                cf.LOG_ERROR_NAME)
-
-        proc_counts = 0
-        for index in range(cf.REGISTER_GPU_COUNT):
-            proc_counts += ls.GpuGetDeviceProcessCounts(index)['proc_counts']
-
-        while proc_counts > cf.TASK_COUNTS_MAX:
-            time.sleep(60)  # 等待释放
-            infoLogger.info('Task {task_id}. Processes more than {count}. Waiting'
-                            .format(task_id=task_id,count=cf.TASK_COUNTS_MAX))
-            proc_counts = 0
-            for index in range(cf.REGISTER_GPU_COUNT):
-                proc_counts += ls.GpuGetDeviceProcessCounts(index)['proc_counts']
-
-        try:
-            debugLogger.debug("start train")
-            # 创建
-            stdout = open(log_file, 'w+')
-            subproc = subprocess.Popen(args=cmd, bufsize=0, shell=True, 
-                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                        preexec_fn=os.setsid, cwd=data_dir)
-            infoLogger.info('Task {id} start train. Subprocess ID:{pid}'
-                            .format(id=task_id, pid=subproc.pid))
-            self.task_subproc = subproc
-            self.set_task_timer(self.time_out, subproc)
-            
-            line = ''
-            while len(line) >= 1 or subproc.poll() == None:
-                # 每次读取512个字符
-                line = subproc.stdout.read(512).decode('utf-8')
-                stdout.write(line)
-                stdout.flush()
-                # print(line)
-                # 反馈输出
-                resp = False
-                while not resp:
-                    try:
-                        # 网络原因可能出错，这里缺乏重传机制，写死一直请求
-                        resp = self.client.post_task_output_str(task_id=self.task['id'],
-                                            user_server_no=self.task['gpu_id'], 
-                                            output_string=line)
-                    except Exception as err:
-                        resp = False
-                        time.sleep(random.randint(1,2))
-                        infoLogger.info('Task {id} post string error. Network error.'\
-                                        .format(id=self.task['id']))
-                        errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-                if TaskStatusZh2En[resp] == 'ST': 
-                    self.stop_task(self.task_subproc)
-                    self.set_status_transfer('ST','RN')
-                    upload_str = '\n' + ': '.join([self.task_status.name,self.task_desc]) + '\n'
-                    resp = False
-                    # 反馈停止训练
-                    while not resp:
-                        try:
-                            resp = self.client.post_task_output_str(
-                                        task_id=self.task['id'],
-                                        user_server_no=self.task['gpu_id'], 
-                                        output_string=upload_str)
-                        except Exception as err:
-                            resp = False
-                            time.sleep(random.randint(1,2))
-                            infoLogger.info('Task {id} stop error. Network error.'\
-                                        .format(id=self.task['id']))
-                            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-                    break
-
-            res = subproc.returncode
-            # subproc.communicate()
-        except BaseException:
-            # 执行过程中出现了错误
-            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-            try:
-                os.killpg(subproc.pid,9)
-                subproc.kill()
-                subproc.communicate()
-            except Exception:
-                errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+    def run_script_in_container(self):
+        user_data_dir = self.task['dir'].split('/')[-1]
+        # 映射宿主机
+        home_dir = cf.HOME_DIR
+        owner = self.owner
+        if 'framework' not in self.task:
+            framework = 'all_in_one'
+            version = 'v0.0.1'
         else:
-            debugLogger.debug(res)
-            if res == 0:
-                debugLogger.debug("success")
-                infoLogger.info('Finish task. Task {id}'.format(
-                                    id=self.task['id']))
-            else:
-                debugLogger.debug("error when running script")
-                # 就要删掉对应的子进程,
-                # 这里可能子进程subprocess已经结束了，例如错误的代码内容等
-                # 因此killpg时可能会抛出异常，不过不影响服务
-                # -9 和 137
-                try:
-                    infoLogger.info('Error when run the script.\
-                                    Task ID: {task_id}.\
-                                    Subprocess ID:{pid}.\
-                                    Returncode:{returncode}.\
-                                    Kill the subprocess.'
-                                .format(task_id=task_id,pid=subproc.pid,returncode=res))
-                    os.killpg(subproc.pid,9)
-                except BaseException:
-                    errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-            stdout.flush()
-            stdout.close()
-        finally:
-            res = subproc.returncode
-            return res
-    
+            framework = self.task['framework']
+            version = self.task['version']
+        imagename = '/'.join([owner,framework]) + ':' + version
+        containername = 'trainbox{cs_id}'.format(
+                                    cs_id=self.consumer_id)
+        cur_user = cf.CURRENT_UID
+        # 注意taskdb需要虚拟文件路径一致
+        
+        # 有没有结束的容器
+        try:
+            check_out = os.popen('docker ps -a | \
+                        grep -w {name}'.format(name=containername)).read()
+            if check_out != '':
+                _id = check_out.split()[0][:10]
+                clear_cont = 'docker rm -f {cont_id}'.format(
+                                    cont_id=_id)
+                os.system(clear_cont)
+        except:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            
+
+        docker_cmd = ('docker run -d \
+                        -v {host_data_dir}:{cont_data_dir} \
+                        -v {host_task_dir}:{cont_task_dir} \
+                        -v {host_log_dir}:{cont_logs_dir} \
+                        -v /home/zzc/docker_test/app:/home/fq-user/zzc_test/   \
+                        -e \"TASK_ID={task_id}\" \
+                        -e \"CS_ID={cs_id}\" \
+                        -e \"USER_NAME\"={username} \
+                        -e \"USER_PASS\"={password} \
+                        --name {cont_name} \
+                        --user {user} \
+                        --pid=host \
+                        --runtime=nvidia \
+                        {imagename}'.format(
+                            host_data_dir=os.path.join(home_dir, 'data'
+                                            ,user_data_dir),
+                            cont_data_dir=os.path.join(cf.APP_HOME_DIR
+                                            ,user_data_dir),
+                            host_task_dir=os.path.join(home_dir,'tasks'),
+                            cont_task_dir=os.path.join(cf.APP_HOME_DIR
+                                            , 'tasks'),
+                            host_log_dir=os.path.join(home_dir, 'logs'),
+                            cont_logs_dir=os.path.join(cf.APP_HOME_DIR
+                                            , 'logs'),
+                            task_id=self.task['id'],
+                            cs_id=self.consumer_id,
+                            username=cf.USER_NAME,
+                            password=cf.USER_PASS,
+                            cont_name=containername,
+                            user=cur_user,
+                            imagename=imagename
+                        ))
+        # 取出容器id的前10位位置
+        try:
+            # 在训练前应该尝试关闭所有db操作
+            self._closedb()
+        except Exception:
+            pass
+
+        try:
+            cont_id = os.popen(docker_cmd).read().split('\n')[0][:10]
+            status = os.popen('docker ps | grep {id}'
+                            .format(id=cont_id)).read()
+            ctl = 0
+            # 看看本地是不是训练结束了
+            while ctl < 3:
+                if status == '':
+                    ctl = ctl + 1
+                else:
+                    ctl = 0
+                time.sleep(2)
+                status = os.popen('docker ps | grep {id}'
+                            .format(id=cont_id)).read()
+        except :
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+                
+        try:
+            clear_cont = 'docker rm -f {cont_id}'.format(
+                                cont_id=cont_id)
+            res = os.system(clear_cont)
+            infoLogger.info('Task {task_id} clear trainbox{cs_id}.'
+                            .format(task_id=self.task['id'],
+                                    cs_id=self.consumer_id))
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+        else:
+            if res != 0:
+                errorLogger.error('Task {task_id} clear trainbox{cs_id} error.'
+                                    .format(task_id=self.task['id'],
+                                    cs_id=self.consumer_id))
+
     def train_model(self):
         client = self.client
         data_dir = self.task['dir']
+        # import ipdb;ipdb.set_trace()
         try:
             # 训练过程出错，不需要再重新下载数据集
             # 正在运行状态,注意gpu_id 对应于服务器端的user_server_no
@@ -545,33 +464,31 @@ class TaskConsumer(object):
                         infoLogger.info('Task {id} confirm re-running error. Network error.'\
                                         .format(id=self.task['id']))
                         errorLogger.error('\n'+str(traceback.format_exc())+'\n')  
-
-                    
+               
             # 恢复的任务
             elif TaskStatusZh2En[self.task['status']] == 'RC':
                 resp = False
                 while not resp:
                     try:
                         resp = client.confirm_request(self.task['id'],self.task['gpu_id'])
+                        
                     except Exception:
                         resp = False
                         time.sleep(random.randint(1,2))
                         infoLogger.info('Task {id} confirm error (recover). Network error.'\
                                         .format(id=self.task['id']))
                         errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-
+                        
                 f_exist = self.read_data_in_local(
                                         str(self.task['id']),'id') 
                 if f_exist == None:
                     # the same as 'SB'
-                    infoLogger.info('Task {} save info. (recover)'.format(self.task['id']))
-                    self.th_lock.acquire()
-                    # 把新来的恢复任务先存下来
-                    self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                            'tasks.dat'), writeback=True)
+                    # 新来的需要存下来                                     
+                    self._opendb(os.path.join(cf.LOCAL_TASKS_DIR,
+                                            'tasks.dat'),mode='c')
                     self.db[str(self.task['id'])] = self.task
-                    self.db.close()
-                    self.th_lock.release()
+                    self._closedb()
+                    infoLogger.info('Task {} save info. (recover)'.format(self.task['id']))
                     self.set_status_transfer('DT', 'RC')
 
                     infoLogger.info('Task {id} start download (recover).'
@@ -628,6 +545,7 @@ class TaskConsumer(object):
                             return data_dir
                 else:
                     last_status = self.read_data_in_local(str(self.task['id']),'last_status')
+                    # 注意这里，一定要取出来最新的状态之后再转移
                     self.set_status_transfer('DT', 'RC')
                     need_code = True
                     need_data = True
@@ -727,12 +645,11 @@ class TaskConsumer(object):
                 infoLogger.info('Task {id} start train (recover).'.format(id=self.task['id']))
                 self.set_status_transfer('RN', 'DT')
 
-
-            # 默认python文件
-            script_name = self.task['script_file'].split('/')[-1]  
             # 目前默认tar.gz
             datafile_name = self.task['data_file'].split('/')[-1]  
-            compress_method = self.decompress_datafile(data_dir, datafile_name)
+            compress_method = self.decompress_datafile(
+                                    data_dir, 
+                                    datafile_name)
             #解压出错
             if compress_method == 'error':
                 resp = False
@@ -763,73 +680,9 @@ class TaskConsumer(object):
             '''
             fix this place
             '''
-            # run_script(data_dir, script_name, task['gpu_id'])
-            res = -1
-            try_time = 0
-            script_res = False
-            # 这里的写法可以改进，tenacity retry 后面可以改进一下写法
-            while res != 0:
-                try_time += 1
-                res = self.run_script(data_dir, script_name, 
-                                        self.task['gpu_id'], self.task['id'])
-                # 没有正常结束,retry
-                if res == 0:
-                    script_res = True
-                    self.set_task_desc(TaskStatus.TaskFinished)
-                # 运行出错
-                elif res == 1:
-                    script_res = False
-                    self.set_task_desc(TaskStatus.ScriptError)
-                else:
-                    script_res = False
-                    # 看一下是否是超时或者服务器要求退出
-                    # 如果是，则马上结束训练
-                    if self.task_status == TaskStatus.TaskStopped or \
-                        self.task_status == TaskStatus.TaskTimeOut:
-                        
-                        return data_dir
-                    
-                if try_time >= 1:
-                    infoLogger.info('Retry {times} times. Post latest retry log.'
-                                    .format(times=try_time))
-                    self.task_desc += ' Upload after {} retries.'.format(try_time)
-                    break
-                if res != 0:
-                    sleep_time = random.randint(30,90)
-                    infoLogger.info('Task {id} return no-zero code.\
-                                    Sleep {time}s and re-run the script.'
-                                    .format(id=self.task['id'],time=sleep_time))
-                    time.sleep(sleep_time)
-                    
-            uploadfile_name = self.compress_model_result(data_dir, compress_method)
-            infoLogger.info('Post result to server. Task {task_id}'
-                            .format(task_id=self.task['id']))
+            # 所有上传和下载 tenacity retry 后面可以改进一下写法
 
-            # 上传结果不能停止
-            upload_str = ': '.join([self.task_status.name,self.task_desc])
-            resp = False
-            while not resp:
-                try:
-                    client.post_task_result(self.task['id'], self.task['gpu_id'], 
-                                    output_string=upload_str,
-                                    valid_or_not=script_res,
-                                    output_file=os.path.join(
-                                        data_dir, uploadfile_name)
-                                    )
-                except Exception:
-                    resp = False
-                    time.sleep(random.randint(1,2))
-                    infoLogger.info('Task {id} post result error. Network error.'\
-                                        .format(id=self.task['id']))
-                    errorLogger.error('\n'+str(traceback.format_exc())+'\n')
-                else:
-                    # 上传成功就退出呗
-                    resp = True
-            
-            if script_res:
-                self.set_status_transfer('CP', 'RN')
-            else:
-                self.set_status_transfer('IV', 'RN')
+            self.run_script_in_container()
 
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
@@ -849,30 +702,28 @@ class TaskConsumer(object):
                 # 写入本地数据库,带有文件夹
                 # 改变本地数据库要加锁
                 if TaskStatusZh2En[self.task['status']] == 'SB':
-                    async with self.co_lock:
-                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                'tasks.dat'), writeback=True)
-                        self.db[task_id] = self.task
-                        # print(self.db[task_id])
-                        self.db.close()
+                    # async with self.co_lock:
+                    self._opendb(os.path.join(cf.LOCAL_TASKS_DIR,
+                                            'tasks.dat'),mode='c')
+                    self.db[task_id] = self.task
+                    # print(self.db[task_id])
+                    self._closedb()
                 elif TaskStatusZh2En[self.task['status']] == 'DT' or \
                     TaskStatusZh2En[self.task['status']] == 'RN':
-                    async with self.co_lock:
-                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                    'tasks.dat'))
+                    # async with self.co_lock:
+                    self._opendb(os.path.join(cf.LOCAL_TASKS_DIR,
+                                            'tasks.dat'),mode='c')
+                    self.task['gpu_id'] = self.db[task_id]['gpu_id']
+                    self.task['dir'] = self.db[task_id]['dir']
+                    self._closedb()
+                elif TaskStatusZh2En[self.task['status']] == 'RC':
+                    # async with self.co_lock:
+                    self._opendb(os.path.join(cf.LOCAL_TASKS_DIR,
+                                            'tasks.dat'),mode='c')
+                    if str(self.task['id']) in self.db.keys():
                         self.task['gpu_id'] = self.db[task_id]['gpu_id']
                         self.task['dir'] = self.db[task_id]['dir']
-                        self.db.close()
-                elif TaskStatusZh2En[self.task['status']] == 'RC':
-                    async with self.co_lock:
-                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                    'tasks.dat'), writeback=True)
-                        if str(self.task['id']) in self.db.keys():
-                            self.task['gpu_id'] = self.db[task_id]['gpu_id']
-                            self.task['dir'] = self.db[task_id]['dir']
-                        # else:
-                        #     self.db[task_id] = self.task
-                        self.db.close()
+                    self._closedb()
                 else:
                     errorLogger.error('Error task status')
                     self.clear_latest_task()
@@ -881,6 +732,7 @@ class TaskConsumer(object):
                 infoLogger.info('Process task {task_id}. Use GPU {index}. Start.'
                                 .format(task_id= self.task['id'],
                                         index=self.task['gpu_id']))
+                pprint(self.task)
                 await self.co_loop.run_in_executor(
                                     None, self.train_model,)
                 infoLogger.info('Process task {task_id}. Use GPU {index}. Over.'

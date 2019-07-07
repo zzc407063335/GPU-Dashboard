@@ -8,11 +8,11 @@ import psutil, shelve
 import asyncio
 from pynvml import *
 from pprint import pprint
-import conn_profile as cf
+import conn_file_r as cf
 from firstquadrants import TaskClient
 import local_service as ls
-from producer import TaskProducer
-from consumer import TaskConsumer
+from recv_producer import TaskProducer
+from recv_consumer import TaskConsumer
 
 from logs.logfile import errorLogger,infoLogger,debugLogger
 

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-from conn_profile import *
-from pynvml import nvmlInit
 from flask import Flask
 from flask_cors import CORS
 from flask_restful import reqparse, abort, Api, Resource
 from enum import Enum, unique
-from multiprocessing import Pool
-import json,time,threading,local_service,remote_service,os
+import local_service
 
 # 中间件调用训练组件的rest api
+
+app = Flask(__name__)
+api = Api(app)
+CORS(app)
 
 @unique
 class GpuInfoType(Enum):
@@ -27,11 +28,6 @@ class GpuInfoType(Enum):
     GpuGetDevicePowerInfo = 12
     GpuGetDeviceProcessDetails = 13
     GpuGetDeviceProcessCounts = 14
-
-
-app = Flask(__name__)
-api = Api(app)
-CORS(app)
 # parser = reqparse.RequestParser()
 
 QUERYS = {
@@ -96,29 +92,4 @@ class GPUQuery(Resource):
         return res, 200
 
 
-def local_service_start(PORT):
-    nvmlInit()
-    try:
-        app.run(host="0.0.0.0", port=PORT)  # 注意 本机测试和容器内测试端口要变动
-    except Exception as err:
-        print(err)
-
-def remote_service_start(client):
-    nvmlInit()
-    try:
-        remote_service.connect_to_remote_server(client)
-    except Exception as err:
-        print(err)
-
 api.add_resource(GPUQuery, '/gpuinfo/<query_id>')
-
-if __name__ == '__main__':
-    client = remote_service.check_user(USER_NAME,USER_PASS, 
-                                PROTOCOL, SERVER_IP, SERVER_PORT)
-    if client == False:
-        os._exit(-1)
-    pool=Pool(2)
-    pool.apply_async(local_service_start, (LOCAL_PORT, ))
-    pool.apply_async(remote_service_start,(client,))
-    pool.close()
-    pool.join()

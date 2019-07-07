@@ -1,13 +1,15 @@
+# -*- coding: utf-8 -*-
+
 import requests
 import time
 from threading import Thread
-import os, sys, traceback, random
+import os, sys, traceback, random, fcntl
 import subprocess, threading
 import json, shelve
 import asyncio
 from pynvml import *
 from pprint import pprint
-import conn_profile as cf
+import conn_file_r as cf
 from firstquadrants import TaskClient
 import local_service as ls
 
@@ -34,6 +36,26 @@ class TaskProducer(object):
     
     def __init__(self):
         self.all_unfin_tasks = []
+        self.db = None
+        self.lockfd = None
+
+    def _opendb(self,filename,mode='c'):       
+        lockfilemode = 'a'
+        lockmode = fcntl.LOCK_EX  
+        self.lockfd = open(filename+'.lck', lockfilemode)
+        
+        try:
+            fcntl.flock(self.lockfd.fileno(), lockmode)
+        except Exception:
+            errorLogger.error('\n'+str(traceback.format_exc())+'\n')
+            return (None, None)
+        self.db = shelve.open(filename, flag=mode,\
+                        writeback=True)
+
+    def _closedb(self):
+        self.db.close()
+        fcntl.flock(self.lockfd.fileno(),fcntl.LOCK_UN)
+        self.lockfd.close()
 
     async def request_for_tasks(self):
         client = self.client
@@ -44,14 +66,16 @@ class TaskProducer(object):
         except Exception:
             errorLogger.error('\n'+str(traceback.format_exc())+'\n')
         
-        async with self.co_lock:
-            self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                    'tasks.dat'), flag='c')
-                        # 新来的任务
-            for key in self.db.keys():
-                print(key)
-                pprint(self.db[key])
-            self.db.close()
+        # async with self.co_lock:
+        #     # 新来的任务
+        #     self._opendb(filename=os.path.join(
+        #                         cf.LOCAL_TASKS_DIR,
+        #                         'tasks.dat'),mode='c')
+        #     for key in self.db.keys():
+        #         print(key)
+        #         pprint(self.db[key])
+        #     self._closedb()
+        
         '''
         首先请求未完成任务列表
         '''
@@ -128,8 +152,8 @@ class TaskProducer(object):
                 continue
                 
 
-            pprint(new_tasks)
-            pprint(unfin_tasks)
+            # pprint(new_tasks)
+            # pprint(unfin_tasks)
 
             # 设备分配待改进
             index_clt = 0
@@ -140,14 +164,20 @@ class TaskProducer(object):
                 if TaskStatusZh2En[cur_task['status']] == 'SB':
                     f_create = True                    
                 elif TaskStatusZh2En[cur_task['status']] == 'RC':
-                    async with self.co_lock:
-                        self.db = shelve.open(os.path.join(cf.LOCAL_TASKS_DIR,
-                                                    'tasks.dat'), flag='c')
-                        # 新来的任务
-                        if str(cur_task['id']) not in self.db.keys():
+                    # async with self.co_lock:
+                    self._opendb(filename=os.path.join(
+                            cf.LOCAL_TASKS_DIR,
+                            'tasks.dat'),mode='c')
+                    # 新来的任务
+                    if str(cur_task['id']) not in self.db.keys():
+                        f_create = True
+                    else:
+                        local_dir = self.db[str(cur_task['id'])]['dir']
+                        # 虽然是恢复的任务，但是本地数据文件被删除了，应该和新提交的任务一样对待
+                        if not os.path.exists(local_dir):
                             f_create = True
-                        self.db.close()
-
+                            cur_task['status'] == 'SB'
+                    self._closedb()
                 if f_create :
                     index_clt = (index_clt + 1) % devices_cnt
                     _dir = ''.join([hex(i) for i in os.urandom(10)])
@@ -163,7 +193,7 @@ class TaskProducer(object):
                                         .format(task_id=cur_task['id'],
                                         status=cur_task['status'],
                                         gpu_id=cur_task['gpu_id']))
-                # print(cur_task)
+                pprint(cur_task)
                 await q_tasks.put(cur_task)
                 self.proc_tasks.append(cur_task['id'])
 
@@ -177,6 +207,6 @@ class TaskProducer(object):
                                     {gpu_id}'
                                     .format(task_id=cur_task['id'],
                                     gpu_id=cur_task['gpu_id']))
-                # print(cur_task)
+                print(cur_task)
                 await q_tasks.put(cur_task)
                 self.proc_tasks.append(cur_task['id'])
