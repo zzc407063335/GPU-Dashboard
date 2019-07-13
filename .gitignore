@@ -4,24 +4,18 @@
 data/
 .idea/
 agent/
+.DS_Store
+.vscode
 __pycache__/
-trainbox/__pycache__/
-agent/__pycache__/
-trainbox/.DS_Store
-agent/.DS_Store
 webapp/node_modules
 webapp/*.md
 webapp/package-lock.json 
 webapp/dist
-.vscode/
 .ipynb_checkpoints/
 notebook.ipynb
 MNIST/
 result/
 firstquadrant/
 keras/
-trainbox/logs/__pycache__
-.DS_Store
-*.h5
 helper/
 
