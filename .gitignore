@@ -8,12 +8,8 @@ agent/
 .DS_Store
 .vscode
 __pycache__/
-<<<<<<< HEAD
 .DS_Store
-=======
->>>>>>> 8d6a03ab8f630d89ed16269e09dd5526ea9577d6
 webapp/node_modules
-webapp/*.md
 webapp/package-lock.json 
 webapp/dist
 .ipynb_checkpoints/
