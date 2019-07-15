@@ -1,0 +1,36 @@
+version: "2.3"
+
+services:
+  local_app:
+      image: gpudashboard:v0.1.0
+      networks:
+        dashboard_net:
+          ipv4_address: 172.19.0.2
+      container_name: train_box
+      runtime: nvidia
+      stdin_open: true
+      tty: true
+      pid: "host"
+      user: root
+      expose:
+       - "8997"
+      environment:
+        LOCAL_PORT: 8997
+        
+  webapp:
+      image: dashboard_web:v0.1.0
+      networks:
+        dashboard_net:
+          ipv4_address: 172.19.0.3
+      container_name: webapp
+      depends_on:
+       - local_app
+      ports:
+       - "8088:80"
+networks:
+   dashboard_net:
+      driver: bridge
+      ipam:
+         config:
+         - subnet: 172.19.0.0/16
+           gateway: 172.19.0.1

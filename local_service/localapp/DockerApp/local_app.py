@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
-from flask import Flask
+from flask import Flask,jsonify,Blueprint
 from flask_cors import CORS
 from flask_restful import reqparse, abort, Api, Resource
 from enum import Enum, unique
-import local_service
-
+import DockerApp.local_service as ls
+from werkzeug.exceptions import HTTPException
 # 中间件调用训练组件的rest api
 
 app = Flask(__name__)
 api = Api(app)
 CORS(app)
+# 在非debug模式下自定义异常处理
+app.config['PROPAGATE_EXCEPTIONS'] = True
 
+@app.errorhandler(Exception)
+def internal_server_error(err):
+    response = dict(status=0, 
+        message='error when enroll nvidia library')
+    return jsonify(response), 500
+    
 @unique
 class GpuInfoType(Enum):
     GpuGetCounts = 0
@@ -44,8 +52,8 @@ QUERYS = {
     'gpu_util': GpuInfoType.GpuGetDeviceUtilization.name,
     'gpu_power': GpuInfoType.GpuGetDevicePowerUsage.name,
     'gpu_powerinfo': GpuInfoType.GpuGetDevicePowerInfo.name,
-    'gpu_proc': GpuInfoType.GpuGetDeviceProcessDetails.name,
-    'gpu_procounts':GpuInfoType.GpuGetDeviceProcessCounts.name
+    'gpu_procounts':GpuInfoType.GpuGetDeviceProcessCounts.name,
+    'gpu_proc': GpuInfoType.GpuGetDeviceProcessDetails.name
 }
 
 
@@ -54,26 +62,24 @@ def abort_if_todo_doesnt_exist(id):
         msg = "error api call"
         abort(404, message=msg)
 
-# 根据函数名字调用函数
-
-
 def gpuinfo_exe_fun(query_id, args):
     # 不带参数，获取GPU数量
     if QUERYS[query_id] == GpuInfoType.GpuGetCounts.name:
-        exe_fun = getattr(local_service, GpuInfoType.GpuGetCounts.name)
-        res = exe_fun()
-        return res
-
-    else:
-        exe_fun = getattr(local_service, QUERYS[query_id])
+        exe_fun = getattr(ls, GpuInfoType.GpuGetCounts.name)
         try:
-            res = exe_fun(int(args['gpu_index']))
-        # 调用错误异常
-        except Exception as err:
-            info = {'error_info': err.__str__()}
-            return info
+            res = exe_fun()
+        except Exception:
+            raise Exception
         else:
             return res
+
+    else:
+        exe_fun = getattr(ls, QUERYS[query_id])
+        try:
+            res = exe_fun(int(args['gpu_index']))
+        except Exception:
+           raise Exception
+        return res
 
 # GPU Query
 class GPUQuery(Resource):
