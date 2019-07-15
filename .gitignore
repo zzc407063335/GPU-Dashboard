@@ -2,6 +2,7 @@
 *.h5
 *.lock
 data/
+test/
 .idea/
 agent/
 .DS_Store
@@ -19,5 +20,4 @@ firstquadrant/
 keras/
 helper/
 trainbox_bak/
-/local_service/fq_task_recv/test
 fq-*/
