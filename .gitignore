@@ -1,7 +1,6 @@
 *.zip
 *.h5
 *.lock
-*.txt
 data/
 .idea/
 agent/
