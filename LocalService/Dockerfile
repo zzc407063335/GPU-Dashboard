@@ -1,14 +1,12 @@
-# docker　服务需要用到nvidia的cuda库
 From nvidia/cuda:10.0-cudnn7-runtime-ubuntu16.04
-# 支持中文
+
 ENV LANG C.UTF-8
 COPY sources.list /etc/apt/
 
-# 为镜像创建用户组，权限问题
 ARG UID=10
 ARG GID=10
 
-# 安装python3，设为默认
+# python3
 RUN apt-get update \
     && sh -c '/bin/echo -e "Y" | apt-get install software-properties-common python-software-properties'  \
     && sh -c '/bin/echo -e "\n" | add-apt-repository ppa:deadsnakes/ppa' \
