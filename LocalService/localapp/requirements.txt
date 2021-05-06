@@ -1,6 +1,6 @@
 mock==3.0.5
 psutil==5.6.2
-Flask_Cors==3.0.7
+Flask_Cors==3.0.9
 Flask_RESTful==0.3.7
 Werkzeug==0.15.4
 pynvml==8.0.1
